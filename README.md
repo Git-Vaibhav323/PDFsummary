@@ -300,5 +300,4 @@ This project is provided as-is for production use.
 
 For issues or questions, check the logs for detailed error messages. The application logs all operations at INFO level.
 
-#   P D F s u m m a r y  
- 
+#
