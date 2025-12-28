@@ -1,0 +1,81 @@
+"""
+Main entry point for the RAG chatbot application.
+"""
+import logging
+import socket
+import sys
+import uvicorn
+from app.config.settings import settings
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+
+logger = logging.getLogger(__name__)
+
+
+def is_port_available(host: str, port: int) -> bool:
+    """Check if a port is available."""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.settimeout(1)
+            result = s.connect_ex((host, port))
+            return result != 0  # Port is available if connection fails
+    except Exception:
+        return False
+
+
+def find_available_port(host: str, start_port: int, max_attempts: int = 10) -> int:
+    """Find an available port starting from start_port."""
+    for i in range(max_attempts):
+        port = start_port + i
+        if is_port_available(host, port):
+            return port
+    return None
+
+
+def main():
+    """Run the FastAPI application."""
+    host = settings.api_host
+    port = settings.api_port
+    
+    # Check if port is available
+    if not is_port_available(host, port):
+        logger.warning(f"Port {port} is already in use. Searching for available port...")
+        available_port = find_available_port(host, port)
+        if available_port:
+            logger.info(f"Using alternative port: {available_port}")
+            port = available_port
+        else:
+            logger.error(f"Could not find an available port starting from {settings.api_port}")
+            logger.error("Please close the application using port 8000 or specify a different port in .env")
+            sys.exit(1)
+    
+    logger.info("Starting RAG PDF Chatbot API...")
+    logger.info(f"API will be available at http://{host}:{port}")
+    logger.info(f"API docs will be available at http://{host}:{port}/docs")
+    
+    try:
+        uvicorn.run(
+            "app.api.routes:app",
+            host=host,
+            port=port,
+            reload=False,
+            log_level="info"
+        )
+    except OSError as e:
+        if "10048" in str(e) or "address already in use" in str(e).lower():
+            logger.error(f"Port {port} is already in use. Please:")
+            logger.error(f"  1. Close the application using port {port}")
+            logger.error(f"  2. Or change API_PORT in your .env file")
+            logger.error(f"  3. Or run: netstat -ano | findstr :{port}  (to find the process)")
+        else:
+            logger.error(f"Error starting server: {e}")
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
+
