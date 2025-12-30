@@ -30,16 +30,10 @@ conversation_storage = ConversationStorage()
 def initialize_components():
     """Initialize RAG components."""
     global vector_store, retriever, rag_graph
-    try:
-        # Initialize vector store (will create empty collection if none exists)
-        vector_store = VectorStore()
-        retriever = ContextRetriever(vector_store)
-        # RAG graph will be initialized when first PDF is uploaded
-        logger.info("RAG components initialized successfully")
-    except Exception as e:
-        logger.error(f"Error initializing components: {e}")
-        # Don't raise - allow startup even if vector store has issues
-        pass
+    # Don't initialize vector_store here - it will be lazy-loaded on first PDF upload
+    # This prevents the heavy embedding model from loading during startup
+    logger.info("RAG components ready for lazy initialization")
+    pass
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):

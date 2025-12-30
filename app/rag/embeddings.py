@@ -14,20 +14,26 @@ class LocalEmbeddings:
     
     def __init__(self):
         """Initialize local embeddings using sentence-transformers."""
+        self._embeddings = None
+        self.model_name = getattr(settings, 'embedding_model', 'all-MiniLM-L6-v2')
+    
+    def _ensure_initialized(self):
+        """Lazy-load the embedding model on first use."""
+        if self._embeddings is not None:
+            return
+        
         try:
-            model_name = getattr(settings, 'embedding_model', 'all-MiniLM-L6-v2')
-            
-            logger.info(f"Loading local embedding model: {model_name}")
+            logger.info(f"Loading local embedding model: {self.model_name}")
             logger.info("This may take a moment on first run (downloading model)...")
             
             # Use HuggingFace embeddings (sentence-transformers under the hood)
-            self.embeddings = HuggingFaceEmbeddings(
-                model_name=model_name,
+            self._embeddings = HuggingFaceEmbeddings(
+                model_name=self.model_name,
                 model_kwargs={'device': 'cpu'},  # Use CPU by default
                 encode_kwargs={'normalize_embeddings': True}  # Normalize for better similarity
             )
             
-            logger.info(f"Local embeddings initialized successfully with model: {model_name}")
+            logger.info(f"Local embeddings initialized successfully with model: {self.model_name}")
             logger.info("✅ Using free local embeddings - no API costs!")
         except ImportError:
             raise ImportError(
@@ -37,6 +43,12 @@ class LocalEmbeddings:
         except Exception as e:
             logger.error(f"Failed to initialize local embeddings: {e}")
             raise
+    
+    @property
+    def embeddings(self):
+        """Get embeddings model, initializing if needed."""
+        self._ensure_initialized()
+        return self._embeddings
     
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
         """
