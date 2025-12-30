@@ -1,0 +1,53 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+ENV/
+env/
+.venv
+
+# Environment
+.env
+.env.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Chroma DB (will be created at runtime)
+chroma_db/
+chroma_db_backup/
+
+# Data
+data/
+
+# Charts
+charts/
+
+# Temporary files
+temp_*.pdf
+*.tmp
+*.log
+
+# Git
+.git/
+.gitignore
+
+# Frontend
+frontend/
+node_modules/
+
+# Documentation
+*.md
+!requirements.txt
+
+# Config files for other platforms
+render.yaml
+netlify.toml
+vercel.json
+
