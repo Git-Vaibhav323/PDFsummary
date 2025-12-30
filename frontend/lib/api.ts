@@ -320,7 +320,7 @@ export const apiClient = {
     try {
       console.log(`[Health Check] Checking backend at ${API_URL}/health`);
       const response = await api.get("/health", { 
-        timeout: 5000,
+        timeout: 30000, // 30 seconds for health check (allow for cold starts)
         validateStatus: (status) => status < 500 // Don't throw on 4xx/5xx
       });
       if (response.status === 200) {
@@ -352,10 +352,10 @@ export const apiClient = {
         console.log(`[Health Check] Trying ${testUrl}/health...`);
         const testApi = axios.create({
           baseURL: testUrl,
-          timeout: 3000,
+          timeout: 10000, // Longer timeout for alternate ports
         });
         const response = await testApi.get("/health", { 
-          timeout: 3000,
+          timeout: 10000,
           validateStatus: (status) => status < 500
         });
         if (response.status === 200) {
