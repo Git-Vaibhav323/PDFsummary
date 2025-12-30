@@ -18,10 +18,13 @@ def download_embedding_model():
         # This downloads and caches the model
         model = SentenceTransformer(model_name)
         logger.info(f"✅ Successfully downloaded and cached {model_name}")
-        logger.info(f"Model cached at: {model.cache_folder()}")
+        # Model is automatically cached by sentence-transformers
+        # Cache location is typically ~/.cache/huggingface/hub/
         return True
     except Exception as e:
         logger.error(f"Failed to download model: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
         return False
 
 if __name__ == "__main__":
