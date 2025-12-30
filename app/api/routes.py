@@ -58,10 +58,17 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# Add CORS middleware for React frontend
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[
+# CORS configuration - allow Netlify domains and localhost for development
+import os
+
+# Get allowed origins from environment or use defaults
+allowed_origins_env = os.environ.get("ALLOWED_ORIGINS", "")
+if allowed_origins_env:
+    # Parse comma-separated origins from environment
+    allowed_origins = [origin.strip() for origin in allowed_origins_env.split(",")]
+else:
+    # Default origins for development and production
+    allowed_origins = [
         "http://localhost:3000",
         "http://127.0.0.1:3000",
         "http://localhost:3001",
@@ -74,7 +81,15 @@ app.add_middleware(
         "http://127.0.0.1:3004",
         "http://localhost:3005",
         "http://127.0.0.1:3005",
-    ],
+    ]
+    # Add common Netlify patterns (will be replaced with actual domain)
+    # User should set ALLOWED_ORIGINS environment variable in Render with their Netlify URL
+    # Example: ALLOWED_ORIGINS=https://your-app.netlify.app,https://your-app.netlify.app/*
+
+# Add CORS middleware for React frontend
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

@@ -38,20 +38,28 @@ def find_available_port(host: str, start_port: int, max_attempts: int = 10) -> i
 
 def main():
     """Run the FastAPI application."""
+    # Render provides PORT environment variable, use it if available
+    import os
+    port = int(os.environ.get("PORT", settings.api_port))
     host = settings.api_host
-    port = settings.api_port
     
-    # Check if port is available
-    if not is_port_available(host, port):
-        logger.warning(f"Port {port} is already in use. Searching for available port...")
-        available_port = find_available_port(host, port)
-        if available_port:
-            logger.info(f"Using alternative port: {available_port}")
-            port = available_port
-        else:
-            logger.error(f"Could not find an available port starting from {settings.api_port}")
-            logger.error("Please close the application using port 8000 or specify a different port in .env")
-            sys.exit(1)
+    # In production (Render), use 0.0.0.0 to bind to all interfaces
+    if os.environ.get("RENDER") or os.environ.get("PORT"):
+        host = "0.0.0.0"
+        logger.info(f"Running in production mode (Render detected)")
+    
+    # Check if port is available (skip in production)
+    if not os.environ.get("RENDER") and not os.environ.get("PORT"):
+        if not is_port_available(host, port):
+            logger.warning(f"Port {port} is already in use. Searching for available port...")
+            available_port = find_available_port(host, port)
+            if available_port:
+                logger.info(f"Using alternative port: {available_port}")
+                port = available_port
+            else:
+                logger.error(f"Could not find an available port starting from {settings.api_port}")
+                logger.error("Please close the application using port 8000 or specify a different port in .env")
+                sys.exit(1)
     
     logger.info("Starting PDF Chatbot API...")
     logger.info(f"API will be available at http://{host}:{port}")

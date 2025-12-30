@@ -78,8 +78,9 @@ class Settings(BaseSettings):
     top_k_retrieval: int = 5
     
     # API Configuration
-    api_host: str = "127.0.0.1"  # Use 127.0.0.1 instead of 0.0.0.0 for browser access
-    api_port: int = 8000
+    # Render provides PORT environment variable, use 0.0.0.0 for production
+    api_host: str = Field(default="0.0.0.0", description="API host (use 0.0.0.0 for production)")
+    api_port: int = Field(default=8000, description="API port (Render provides PORT env var)")
     
     # Visualization Configuration
     chart_output_dir: str = "./charts"

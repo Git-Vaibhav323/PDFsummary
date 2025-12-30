@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: ragbotpdf-backend
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python run.py
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.0
+      - key: OPENAI_API_KEY
+        sync: false  # Set this in Render dashboard
+      - key: MISTRAL_API_KEY
+        sync: false  # Optional - set in Render dashboard if using OCR
+      - key: ALLOWED_ORIGINS
+        sync: false  # Set to your Netlify URL, e.g., https://your-app.netlify.app
+      # PORT is automatically provided by Render, no need to set it
+
