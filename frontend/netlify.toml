@@ -1,10 +1,10 @@
 [build]
-  command = "npm install && npm run build"
+  command = "npm run build"
   publish = ".next"
 
 [build.environment]
   NODE_VERSION = "20"
-  NPM_FLAGS = "--legacy-peer-deps"
 
-# Next.js handles routing internally, no redirects needed
+[[plugins]]
+  package = "@netlify/plugin-nextjs"
 
