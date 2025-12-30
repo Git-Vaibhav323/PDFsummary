@@ -1,28 +1,39 @@
-# Use Python 3.11 slim image
-FROM python:3.11-slim
+# Multi-stage build for smaller image
+FROM python:3.11-slim as builder
 
-# Set working directory
 WORKDIR /app
 
-# Install system dependencies
+# Install build dependencies
 RUN apt-get update && apt-get install -y \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements first for better caching
+# Copy requirements and install dependencies
 COPY requirements.txt .
-
-# Install Python dependencies
 RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt
+    pip install --no-cache-dir --user -r requirements.txt
+
+# Download models in builder stage
+COPY download_models.py .
+RUN python download_models.py
+
+# Final stage - minimal image
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Copy only installed packages from builder
+COPY --from=builder /root/.local /root/.local
+COPY --from=builder /root/.cache /root/.cache
 
 # Copy application code
 COPY . .
 
-# Pre-download embedding models during build
-RUN python download_models.py
+# Make sure scripts in .local are usable
+ENV PATH=/root/.local/bin:$PATH
+ENV PYTHONUNBUFFERED=1
 
-# Expose port (Railway will set PORT env variable)
+# Expose port
 EXPOSE 8000
 
 # Run the application

@@ -16,16 +16,21 @@ def download_embedding_model():
     
     try:
         # This downloads and caches the model
+        # Set cache folder to /root/.cache to persist in Docker
+        import os
+        os.environ['TRANSFORMERS_CACHE'] = '/root/.cache/huggingface'
+        os.environ['HF_HOME'] = '/root/.cache/huggingface'
+        
         model = SentenceTransformer(model_name)
         logger.info(f"✅ Successfully downloaded and cached {model_name}")
-        # Model is automatically cached by sentence-transformers
-        # Cache location is typically ~/.cache/huggingface/hub/
         return True
     except Exception as e:
         logger.error(f"Failed to download model: {e}")
         import traceback
         logger.error(traceback.format_exc())
-        return False
+        # Don't fail build if model download fails - will download at runtime
+        logger.warning("Model download failed, will download at runtime")
+        return True  # Return True to not fail build
 
 if __name__ == "__main__":
     success = download_embedding_model()
