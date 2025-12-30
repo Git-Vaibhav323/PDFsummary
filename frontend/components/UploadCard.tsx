@@ -70,23 +70,30 @@ export default function UploadCard({
     setUploadProgress(0);
 
     try {
-      // Simulate progress
+      console.log("[UploadCard] Starting PDF upload...");
+      
+      // Simulate progress - slower and more realistic
       const progressInterval = setInterval(() => {
         setUploadProgress((prev) => {
-          if (prev >= 90) {
+          if (prev >= 85) {
             clearInterval(progressInterval);
-            return 90;
+            return 85; // Stop at 85% to show we're waiting for server
           }
-          return prev + 10;
+          return prev + 5;
         });
-      }, 200);
+      }, 500);
 
+      console.log("[UploadCard] Calling API...");
+      const startTime = Date.now();
       const result = await apiClient.uploadPDF(file);
+      const duration = ((Date.now() - startTime) / 1000).toFixed(1);
+      console.log(`[UploadCard] Upload completed in ${duration}s`);
 
       clearInterval(progressInterval);
       setUploadProgress(100);
 
       if (result.success) {
+        console.log("[UploadCard] Upload successful, notifying parent...");
         setTimeout(() => {
           const fileName = file.name;
           const fileSize = file.size;
@@ -96,14 +103,19 @@ export default function UploadCard({
           onUploadSuccess(fileName, fileSize);
         }, 500);
       } else {
+        console.error("[UploadCard] Upload failed:", result.error);
         setIsUploading(false);
         setUploadProgress(0);
         onUploadError(result.error || "Failed to upload PDF");
       }
     } catch (error: any) {
+      console.error("[UploadCard] Upload error:", error);
       setIsUploading(false);
       setUploadProgress(0);
-      onUploadError(error.message || "Failed to upload PDF");
+      const errorMsg = error.code === 'ECONNABORTED' 
+        ? "Upload timed out. The file might be too large or the server is busy. Please try again."
+        : error.message || "Failed to upload PDF";
+      onUploadError(errorMsg);
     }
   }, [file, onUploadSuccess, onUploadError]);
 
