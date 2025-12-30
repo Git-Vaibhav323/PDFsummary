@@ -254,11 +254,15 @@ class PreprocessingGraph:
             else:
                 structured_data = []
             
+            # Handle case where structured_data might be None
+            if structured_data is None:
+                structured_data = []
+            
             logger.info(f"Extracted {len(structured_data)} structured data items")
             return {**state, "structured_data": structured_data}
             
         except Exception as e:
-            logger.error(f"Error in extract_structured_data_node: {e}")
+            logger.warning(f"Structured data extraction failed: {e} - continuing without structured data")
             return {**state, "structured_data": []}
     
     def _should_run_ocr(self, state: PreprocessingState) -> str:

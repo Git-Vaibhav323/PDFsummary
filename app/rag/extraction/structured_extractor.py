@@ -132,8 +132,8 @@ class StructuredDataExtractor:
                     return None
                 
             except json.JSONDecodeError as json_error:
-                logger.error(f"Failed to parse JSON response: {json_error}")
-                logger.debug(f"Response text: {response_text[:500]}")
+                logger.warning(f"Structured data extraction failed (JSON parse error) - continuing without structured data")
+                logger.debug(f"Response text: {response_text[:500] if response_text else 'No response'}")
                 return None
             
         except Exception as e:
