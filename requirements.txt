@@ -5,10 +5,10 @@ pydantic>=2.5.0,<3.0.0
 pydantic-settings>=2.1.0,<3.0.0
 
 # LangChain & LangGraph
-langchain>=0.1.0,<0.3.0
-langchain-community>=0.0.10,<0.3.0
-langchain-groq>=0.1.0,<1.0.0
-langgraph>=0.0.20,<0.3.0
+langchain>=0.3.0,<0.4.0
+langchain-community>=0.3.0,<0.4.0
+langchain-openai>=0.1.0,<1.0.0
+langgraph>=0.2.0,<0.3.0
 
 # Vector Database
 chromadb>=0.4.18,<0.5.0
@@ -31,4 +31,13 @@ torch>=2.0.0,<3.0.0
 # Streamlit Dashboard
 streamlit>=1.28.0,<2.0.0
 Pillow>=10.0.0,<11.0.0
+pandas>=2.0.0,<3.0.0
+
+# Mistral AI (for OCR and preprocessing)
+# Pinned to <1.9.0 to avoid protobuf>=5.0 requirement (newer versions require opentelemetry-proto>=1.33.1 which needs protobuf>=5.0)
+mistralai>=1.0.0,<1.9.0
+
+# Pin protobuf to compatible version (required by streamlit and other packages)
+# Streamlit requires protobuf<5,>=3.20, so we pin to 4.x
+protobuf>=4.21.6,<5.0.0
 

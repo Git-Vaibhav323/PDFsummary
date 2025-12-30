@@ -53,7 +53,7 @@ def main():
             logger.error("Please close the application using port 8000 or specify a different port in .env")
             sys.exit(1)
     
-    logger.info("Starting RAG PDF Chatbot API...")
+    logger.info("Starting PDF Chatbot API...")
     logger.info(f"API will be available at http://{host}:{port}")
     logger.info(f"API docs will be available at http://{host}:{port}/docs")
     
@@ -63,7 +63,9 @@ def main():
             host=host,
             port=port,
             reload=False,
-            log_level="info"
+            log_level="info",
+            timeout_keep_alive=600,  # 10 minutes keep-alive timeout
+            timeout_graceful_shutdown=30  # 30 seconds graceful shutdown
         )
     except OSError as e:
         if "10048" in str(e) or "address already in use" in str(e).lower():

@@ -29,31 +29,34 @@ ENV_FILE_PATH = os.path.join(PROJECT_ROOT, ".env")
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
     
-    # Groq API Configuration
-    groq_api_key: str = Field(..., description="Groq API key (required)")
-    groq_model: str = "llama-3.1-8b-instant"  # Fast and reliable model (llama-3.1-70b-versatile was decommissioned)
+    # OpenAI API Configuration
+    openai_api_key: str = Field(..., description="OpenAI API key (required)")
+    openai_model: str = "gpt-4o-mini"  # Fast and cost-effective model (alternatives: gpt-4o, gpt-3.5-turbo)
     
-    @field_validator('groq_api_key')
+    # Mistral API Configuration (for OCR and preprocessing)
+    mistral_api_key: Optional[str] = Field(default=None, description="Mistral API key (optional, required for OCR)")
+    
+    @field_validator('openai_api_key')
     @classmethod
     def validate_api_key(cls, v: str) -> str:
         """Validate that API key is provided and not a placeholder."""
         if not v:
-            raise ValueError("GROQ_API_KEY is required. Please set it in your .env file.")
+            raise ValueError("OPENAI_API_KEY is required. Please set it in your .env file.")
         
         # Strip whitespace
         v = v.strip()
         
-        # Remove leading = if present (common .env file mistake: GROQ_API_KEY==value)
+        # Remove leading = if present (common .env file mistake: OPENAI_API_KEY==value)
         if v.startswith('='):
             v = v[1:].strip()
-            logger.warning("Removed leading '=' from API key - check your .env file format (should be GROQ_API_KEY=value, not GROQ_API_KEY==value)")
+            logger.warning("Removed leading '=' from API key - check your .env file format (should be OPENAI_API_KEY=value, not OPENAI_API_KEY==value)")
         
         if v == "":
-            raise ValueError("GROQ_API_KEY is empty. Please set it in your .env file.")
-        if "your_groq_api_key" in v.lower() or "your_" in v.lower():
-            raise ValueError("GROQ_API_KEY appears to be a placeholder. Please set a valid API key in your .env file.")
+            raise ValueError("OPENAI_API_KEY is empty. Please set it in your .env file.")
+        if "your_openai_api_key" in v.lower() or "your_" in v.lower() or "sk-" not in v:
+            raise ValueError("OPENAI_API_KEY appears to be a placeholder. Please set a valid API key in your .env file.")
         if len(v) < 20:
-            raise ValueError(f"GROQ_API_KEY appears to be invalid (too short: {len(v)} chars). Please check your .env file.")
+            raise ValueError(f"OPENAI_API_KEY appears to be invalid (too short: {len(v)} chars). Please check your .env file.")
         return v
     
     # Local Embeddings Configuration (no API key needed)
@@ -106,12 +109,12 @@ try:
 except Exception as e:
     logger.error(f"Error loading settings: {e}")
     logger.error(f"Looking for .env at: {ENV_FILE_PATH}")
-    logger.error(f"Please ensure you have a .env file with GROQ_API_KEY set")
+    logger.error(f"Please ensure you have a .env file with OPENAI_API_KEY set")
     # Create a dummy settings object to prevent import errors
     # The app will handle the error gracefully
     class DummySettings:
-        groq_api_key = None
-        groq_model = "llama-3.1-8b-instant"
+        openai_api_key = None
+        openai_model = "gpt-4o-mini"
         embedding_model = "all-MiniLM-L6-v2"
         chroma_persist_directory = "./chroma_db"
         chroma_collection_name = "pdf_documents"
@@ -121,5 +124,6 @@ except Exception as e:
         api_host = "127.0.0.1"
         api_port = 8000
         chart_output_dir = "./charts"
+        mistral_api_key = None
     settings = DummySettings()
 

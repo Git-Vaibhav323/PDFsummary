@@ -67,6 +67,7 @@ class PDFLoader:
             # Create result before closing document
             result = {
                 "text": full_text,
+                "raw_text": full_text,  # Preserve raw text for OCR detection
                 "pages": pages,
                 "total_pages": total_pages,
                 "file_path": file_path
