@@ -2,8 +2,11 @@ services:
   - type: web
     name: ragbotpdf-backend
     runtime: python
-    buildCommand: pip install -r requirements.txt && python download_models.py
+    # Pre-install dependencies and download embedding models during build (not runtime)
+    buildCommand: pip install --upgrade pip && pip install -r requirements.txt && python download_models.py
     startCommand: python run.py
+    # Health check configuration
+    healthCheckPath: /health
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.9
@@ -12,6 +15,6 @@ services:
       - key: MISTRAL_API_KEY
         sync: false  # Optional - set in Render dashboard if using OCR
       - key: ALLOWED_ORIGINS
-        sync: false  # Set to your Netlify URL, e.g., https://your-app.netlify.app
+        sync: false  # Set to your Netlify URL (e.g., https://your-app.netlify.app) or use regex: https://.*\.netlify\.app
       # PORT is automatically provided by Render, no need to set it
 

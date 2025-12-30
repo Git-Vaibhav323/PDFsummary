@@ -4,7 +4,15 @@
 
 [build.environment]
   NODE_VERSION = "20"
+  # NEXT_PUBLIC_API_URL should be set in Netlify dashboard Environment Variables
+  # Example: https://your-backend.onrender.com
 
 [[plugins]]
   package = "@netlify/plugin-nextjs"
+
+# Redirects for client-side routing
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
 
