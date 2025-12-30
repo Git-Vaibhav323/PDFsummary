@@ -3,6 +3,7 @@ Local embeddings using sentence-transformers (free, no API needed).
 """
 from typing import List
 import logging
+import os
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from app.config.settings import settings
 
@@ -23,14 +24,30 @@ class LocalEmbeddings:
             return
         
         try:
+            # Use the same cache directory as download_models.py
+            cache_dir = os.path.join(os.getcwd(), '.model_cache')
+            os.makedirs(cache_dir, exist_ok=True)
+            
+            # Set environment variables for HuggingFace cache
+            os.environ['SENTENCE_TRANSFORMERS_HOME'] = cache_dir
+            os.environ['TRANSFORMERS_CACHE'] = cache_dir
+            os.environ['HF_HOME'] = cache_dir
+            
             logger.info(f"Loading local embedding model: {self.model_name}")
-            logger.info("This may take a moment on first run (downloading model)...")
+            logger.info(f"Using cache directory: {cache_dir}")
+            
+            # Check if model is already cached
+            if os.path.exists(cache_dir) and any(os.scandir(cache_dir)):
+                logger.info("✅ Found cached model, loading from cache...")
+            else:
+                logger.info("⚠️ Model not found in cache, will download (this may take a moment)...")
             
             # Use HuggingFace embeddings (sentence-transformers under the hood)
             self._embeddings = HuggingFaceEmbeddings(
                 model_name=self.model_name,
                 model_kwargs={'device': 'cpu'},  # Use CPU by default
-                encode_kwargs={'normalize_embeddings': True}  # Normalize for better similarity
+                encode_kwargs={'normalize_embeddings': True},  # Normalize for better similarity
+                cache_folder=cache_dir
             )
             
             logger.info(f"Local embeddings initialized successfully with model: {self.model_name}")
