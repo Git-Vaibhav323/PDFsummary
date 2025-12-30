@@ -54,6 +54,7 @@ app = FastAPI(
 
 # CORS configuration - allow Netlify domains and localhost for development
 import os
+import re
 
 # Get allowed origins from environment or use defaults
 allowed_origins_env = os.environ.get("ALLOWED_ORIGINS", "")
@@ -61,7 +62,7 @@ if allowed_origins_env:
     # Parse comma-separated origins from environment
     allowed_origins = [origin.strip() for origin in allowed_origins_env.split(",")]
 else:
-    # Default origins for development and production
+    # Default origins for development
     allowed_origins = [
         "http://localhost:3000",
         "http://127.0.0.1:3000",
@@ -76,17 +77,42 @@ else:
         "http://localhost:3005",
         "http://127.0.0.1:3005",
     ]
-    # Add common Netlify patterns (will be replaced with actual domain)
-    # User should set ALLOWED_ORIGINS environment variable in Render with their Netlify URL
-    # Example: ALLOWED_ORIGINS=https://your-app.netlify.app,https://your-app.netlify.app/*
+
+# Pattern to match Netlify deploy previews and production
+netlify_pattern = re.compile(r"https://.*\.netlify\.app$")
+
+def check_cors_origin(origin: str, allowed_origins: list) -> bool:
+    """Check if origin is allowed, including Netlify pattern matching."""
+    if origin in allowed_origins:
+        return True
+    # Check if it's a Netlify URL (production or deploy preview)
+    if netlify_pattern.match(origin):
+        return True
+    return False
+
+# Custom CORS middleware configuration
+from fastapi.middleware.cors import CORSMiddleware as BaseCORSMiddleware
+
+class CustomCORSMiddleware(BaseCORSMiddleware):
+    """Custom CORS middleware that handles Netlify deploy previews."""
+    
+    def __init__(self, app, **kwargs):
+        # Remove allow_origins from kwargs as we'll handle it custom
+        self.allowed_origins = kwargs.pop('allow_origins', [])
+        super().__init__(app, allow_origins=[], **kwargs)
+    
+    def is_allowed_origin(self, origin: str) -> bool:
+        """Check if origin is allowed."""
+        return check_cors_origin(origin, self.allowed_origins)
 
 # Add CORS middleware for React frontend
 app.add_middleware(
-    CORSMiddleware,
+    CustomCORSMiddleware,
     allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    allow_origin_regex=r"https://.*\.netlify\.app",
 )
 
 
