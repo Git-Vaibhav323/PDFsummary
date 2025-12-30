@@ -6,7 +6,15 @@ import { formatTimestamp } from "@/lib/utils";
 interface ChatMessageProps {
   role: "user" | "assistant";
   content: string;
-  visualization?: string;
+  visualization?: string | {
+    image_base64?: string;
+    markdown?: string;
+    chart_type?: string;
+    title?: string;
+    headers?: string[];
+    rows?: string[][];
+    error?: string;
+  } | null;
   timestamp?: Date;
 }
 

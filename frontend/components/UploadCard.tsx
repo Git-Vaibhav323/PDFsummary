@@ -8,7 +8,7 @@ import { formatFileSize } from "@/lib/utils";
 import { apiClient } from "@/lib/api";
 
 interface UploadCardProps {
-  onUploadSuccess: () => void;
+  onUploadSuccess: (fileName?: string, fileSize?: number) => void;
   onUploadError: (error: string) => void;
 }
 
