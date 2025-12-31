@@ -29,34 +29,40 @@ def _lazy_imports():
 # Initialize variables
 PDFLoader = TextChunker = VectorStore = ContextRetriever = RAGGraph = settings = ConversationStorage = None
 
-# Initialize components
+# Initialize components - ALL lazy loaded
 vector_store = None
 retriever = None
 rag_graph = None
 conversation_storage = None
+_components_loaded = False
 
-# Initialize on startup
-def initialize_components():
-    """Initialize RAG components."""
-    global conversation_storage
-    # Lazy import
+def ensure_components_loaded():
+    """Ensure all components are loaded - called on first use."""
+    global conversation_storage, _components_loaded, PDFLoader, TextChunker, VectorStore, ContextRetriever, RAGGraph, settings, ConversationStorage
+    
+    if _components_loaded:
+        return
+    
+    logger.info("🔄 Loading components on first use...")
+    
+    # Import heavy modules
     _lazy_imports()
-    # Initialize lightweight components only
+    
+    # Initialize conversation storage
     conversation_storage = ConversationStorage()
-    logger.info("✅ Lightweight components initialized")
-    logger.info("🔄 Heavy components (embeddings, vector store) will load on first use")
+    
+    _components_loaded = True
+    logger.info("✅ All components loaded")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifespan context manager for startup/shutdown."""
-    # Startup
-    logger.info("🚀 Starting FastAPI application...")
-    initialize_components()
-    logger.info("✅ Application startup complete")
+    # Startup - NO initialization, just log
+    logger.info("🚀 FastAPI application starting...")
+    logger.info("✅ Application ready - components will load on first request")
     yield
-    # Shutdown (if needed)
+    # Shutdown
     logger.info("👋 Application shutting down...")
-    pass
 
 # FastAPI app
 app = FastAPI(
@@ -321,6 +327,9 @@ async def chat(request: ChatRequest):
         rag_graph = RAGGraph(retriever)
     
     try:
+        # Ensure components are loaded
+        ensure_components_loaded()
+        
         # Get or create conversation
         conversation_id = request.conversation_id
         if not conversation_id:
@@ -433,6 +442,7 @@ async def create_conversation(request: CreateConversationRequest = CreateConvers
     Returns:
         Created conversation details
     """
+    ensure_components_loaded()
     try:
         conversation = conversation_storage.create_conversation(title=request.title)
         return ConversationResponse(**conversation)
@@ -452,6 +462,7 @@ async def list_conversations(limit: int = 50):
     Returns:
         List of conversations
     """
+    ensure_components_loaded()
     try:
         conversations = conversation_storage.list_conversations(limit=limit)
         return {"conversations": conversations}
@@ -471,6 +482,7 @@ async def get_conversation(conversation_id: str):
     Returns:
         Conversation with messages
     """
+    ensure_components_loaded()
     try:
         conversation = conversation_storage.get_conversation(conversation_id)
         if not conversation:
@@ -494,6 +506,7 @@ async def delete_conversation(conversation_id: str):
     Returns:
         Success message
     """
+    ensure_components_loaded()
     try:
         deleted = conversation_storage.delete_conversation(conversation_id)
         if not deleted:
