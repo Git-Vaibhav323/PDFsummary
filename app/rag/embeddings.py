@@ -4,7 +4,7 @@ Local embeddings using sentence-transformers (free, no API needed).
 from typing import List
 import logging
 import os
-from langchain_community.embeddings import HuggingFaceEmbeddings
+from sentence_transformers import SentenceTransformer
 from app.config.settings import settings
 
 logger = logging.getLogger(__name__)
@@ -15,12 +15,12 @@ class LocalEmbeddings:
     
     def __init__(self):
         """Initialize local embeddings using sentence-transformers."""
-        self._embeddings = None
+        self._model = None
         self.model_name = getattr(settings, 'embedding_model', 'all-MiniLM-L6-v2')
     
     def _ensure_initialized(self):
         """Lazy-load the embedding model on first use."""
-        if self._embeddings is not None:
+        if self._model is not None:
             return
         
         try:
@@ -42,15 +42,10 @@ class LocalEmbeddings:
             else:
                 logger.info("⚠️ Model not found in cache, will download (this may take a moment)...")
             
-            # Use HuggingFace embeddings (sentence-transformers under the hood)
-            self._embeddings = HuggingFaceEmbeddings(
-                model_name=self.model_name,
-                model_kwargs={'device': 'cpu'},  # Use CPU by default
-                encode_kwargs={'normalize_embeddings': True},  # Normalize for better similarity
-                cache_folder=cache_dir
-            )
+            # Use SentenceTransformer directly (more reliable than LangChain wrapper)
+            self._model = SentenceTransformer(self.model_name, cache_folder=cache_dir)
             
-            logger.info(f"Local embeddings initialized successfully with model: {self.model_name}")
+            logger.info(f"✅ Model {self.model_name} loaded successfully")
             logger.info("✅ Using free local embeddings - no API costs!")
         except ImportError:
             raise ImportError(
@@ -63,9 +58,10 @@ class LocalEmbeddings:
     
     @property
     def embeddings(self):
-        """Get embeddings model, initializing if needed."""
+        """Get embeddings model for LangChain compatibility."""
         self._ensure_initialized()
-        return self._embeddings
+        return self
+    
     
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
         """
@@ -80,27 +76,31 @@ class LocalEmbeddings:
         if not texts:
             return []
         
+        self._ensure_initialized()
+        
         try:
-            # Local embeddings are fast and don't have rate limits
-            # Process in reasonable batches for memory efficiency
-            batch_size = 32  # Good batch size for local embeddings
-            all_embeddings = []
+            logger.info(f"Embedding {len(texts)} document chunks...")
             
-            for i in range(0, len(texts), batch_size):
-                batch = texts[i:i + batch_size]
-                batch_num = i // batch_size + 1
-                total_batches = (len(texts) + batch_size - 1) // batch_size
-                
-                logger.debug(f"Embedding batch {batch_num}/{total_batches} ({len(batch)} texts)")
-                
-                batch_embeddings = self.embeddings.embed_documents(batch)
-                all_embeddings.extend(batch_embeddings)
+            # Use SentenceTransformer directly - faster and more reliable
+            # Convert to float32 numpy arrays then to lists for ChromaDB compatibility
+            embeddings = self._model.encode(
+                texts,
+                batch_size=16,  # Smaller batch size for memory efficiency on free tier
+                show_progress_bar=False,
+                convert_to_numpy=True,
+                normalize_embeddings=True
+            )
             
-            logger.info(f"Successfully embedded {len(texts)} documents")
-            return all_embeddings
+            # Convert numpy arrays to lists
+            embeddings_list = embeddings.tolist()
+            
+            logger.info(f"✅ Successfully embedded {len(texts)} documents")
+            return embeddings_list
             
         except Exception as e:
-            logger.error(f"Error embedding documents: {e}")
+            logger.error(f"❌ Error embedding documents: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
             raise
     
     def embed_query(self, text: str) -> List[float]:
@@ -116,12 +116,29 @@ class LocalEmbeddings:
         if not text or not text.strip():
             raise ValueError("Query text cannot be empty")
         
+        self._ensure_initialized()
+        
         try:
-            return self.embeddings.embed_query(text)
+            logger.debug(f"Embedding query: {text[:50]}...")
+            
+            # Use SentenceTransformer directly
+            embedding = self._model.encode(
+                text,
+                convert_to_numpy=True,
+                normalize_embeddings=True
+            )
+            
+            # Convert numpy array to list
+            embedding_list = embedding.tolist()
+            
+            logger.debug("✅ Query embedded successfully")
+            return embedding_list
+            
         except Exception as e:
-            logger.error(f"Error embedding query: {e}")
+            logger.error(f"❌ Error embedding query: {e}")
             raise
     
     def get_embeddings_model(self):
         """Get the underlying embeddings model for direct use."""
-        return self.embeddings
+        self._ensure_initialized()
+        return self
