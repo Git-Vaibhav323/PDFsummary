@@ -178,6 +178,9 @@ async def upload_pdf(file: UploadFile = File(...)):
     """
     global vector_store
     
+    # Ensure all components are loaded first
+    ensure_components_loaded()
+    
     if not file.filename.endswith('.pdf'):
         raise HTTPException(status_code=400, detail="File must be a PDF")
     
