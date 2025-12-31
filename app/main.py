@@ -65,15 +65,21 @@ def main():
     logger.info(f"API will be available at http://{host}:{port}")
     logger.info(f"API docs will be available at http://{host}:{port}/docs")
     
+    # Import the app to ensure all imports are loaded before uvicorn starts
+    from app.api.routes import app as fastapi_app
+    logger.info("✅ FastAPI app imported successfully")
+    
     try:
+        # Use the direct app object instead of string import for faster startup
         uvicorn.run(
-            "app.api.routes:app",
+            fastapi_app,
             host=host,
             port=port,
             reload=False,
             log_level="info",
             timeout_keep_alive=600,  # 10 minutes keep-alive timeout
-            timeout_graceful_shutdown=30  # 30 seconds graceful shutdown
+            timeout_graceful_shutdown=30,  # 30 seconds graceful shutdown
+            workers=1  # Single worker for free tier
         )
     except OSError as e:
         if "10048" in str(e) or "address already in use" in str(e).lower():

@@ -10,38 +10,52 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 import logging
-from app.rag.pdf_loader import PDFLoader
-from app.rag.chunker import TextChunker
-from app.rag.vector_store import VectorStore
-from app.rag.retriever import ContextRetriever
-from app.rag.graph import RAGGraph
-from app.config.settings import settings
-from app.database.conversations import ConversationStorage
 
 logger = logging.getLogger(__name__)
+
+# Lazy import heavy dependencies to speed up startup
+def _lazy_imports():
+    """Import heavy dependencies only when needed."""
+    global PDFLoader, TextChunker, VectorStore, ContextRetriever, RAGGraph, ConversationStorage, settings
+    from app.rag.pdf_loader import PDFLoader
+    from app.rag.chunker import TextChunker
+    from app.rag.vector_store import VectorStore
+    from app.rag.retriever import ContextRetriever
+    from app.rag.graph import RAGGraph
+    from app.config.settings import settings
+    from app.database.conversations import ConversationStorage
+    return PDFLoader, TextChunker, VectorStore, ContextRetriever, RAGGraph, settings, ConversationStorage
+
+# Initialize variables
+PDFLoader = TextChunker = VectorStore = ContextRetriever = RAGGraph = settings = ConversationStorage = None
 
 # Initialize components
 vector_store = None
 retriever = None
 rag_graph = None
-conversation_storage = ConversationStorage()
+conversation_storage = None
 
 # Initialize on startup
 def initialize_components():
     """Initialize RAG components."""
-    global vector_store, retriever, rag_graph
-    # Don't initialize vector_store here - it will be lazy-loaded on first PDF upload
-    # This prevents the heavy embedding model from loading during startup
-    logger.info("RAG components ready for lazy initialization")
-    pass
+    global conversation_storage
+    # Lazy import
+    _lazy_imports()
+    # Initialize lightweight components only
+    conversation_storage = ConversationStorage()
+    logger.info("✅ Lightweight components initialized")
+    logger.info("🔄 Heavy components (embeddings, vector store) will load on first use")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifespan context manager for startup/shutdown."""
     # Startup
+    logger.info("🚀 Starting FastAPI application...")
     initialize_components()
+    logger.info("✅ Application startup complete")
     yield
     # Shutdown (if needed)
+    logger.info("👋 Application shutting down...")
     pass
 
 # FastAPI app
