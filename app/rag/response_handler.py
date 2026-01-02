@@ -172,21 +172,45 @@ class ResponseBuilder:
         if viz_result:
             # CRITICAL: Check if viz_result itself has an error (not nested in chart)
             if isinstance(viz_result, dict) and "error" in viz_result and "chart" not in viz_result:
-                error_msg = viz_result.get("error", "No structured numerical data available to generate a chart.")
-                logger.warning(f"Visualization error detected at top level: {error_msg} - updating answer")
-                # Update answer to show error message
-                answer = error_msg
-                chart = None
+                # CRITICAL: Check if we have valid table/chart data despite the error
+                has_valid_data = (
+                    (viz_result.get("headers") and viz_result.get("rows")) or
+                    (viz_result.get("labels") and viz_result.get("values"))
+                )
+                
+                if has_valid_data:
+                    # We have valid data - remove error and use the data
+                    logger.warning(f"⚠️ Removing error from viz_result - valid table/chart data exists")
+                    viz_result.pop("error", None)
+                    chart = viz_result.get("chart") or viz_result
+                else:
+                    # No valid data - use error
+                    error_msg = viz_result.get("error", "No structured numerical data available to generate a chart.")
+                    logger.warning(f"Visualization error detected at top level: {error_msg} - updating answer")
+                    answer = error_msg
+                    chart = None
             else:
                 chart = viz_result.get("chart")
                 
-                # CRITICAL: Filter out error objects in chart
+                # CRITICAL: Filter out error objects in chart, but only if no valid data
                 if chart and isinstance(chart, dict):
+                    # Check if we have valid data despite error
+                    has_valid_data = (
+                        (chart.get("headers") and chart.get("rows")) or
+                        (chart.get("labels") and chart.get("values"))
+                    )
+                    
                     if "error" in chart:
-                        error_msg = chart.get("error", "No structured numerical data available to generate a chart.")
-                        logger.warning(f"Visualization error detected in chart: {error_msg} - filtering out")
-                        answer = error_msg
-                        chart = None
+                        if has_valid_data:
+                            # We have valid data - remove error
+                            logger.warning(f"⚠️ Removing error from chart - valid table/chart data exists")
+                            chart.pop("error", None)
+                        else:
+                            # No valid data - use error
+                            error_msg = chart.get("error", "No structured numerical data available to generate a chart.")
+                            logger.warning(f"Visualization error detected in chart: {error_msg} - filtering out")
+                            answer = error_msg
+                            chart = None
                     elif not chart.get("type"):
                         logger.warning("Chart missing type field - filtering out")
                         chart = None

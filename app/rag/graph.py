@@ -2209,10 +2209,19 @@ Answer:"""
                     
                     # CRITICAL: If we have visualization but answer says "Not available", fix it
                     if visualization and "not available" in answer.lower():
-                        if is_table_request or (visualization.get("chart_type") == "table" or visualization.get("type") == "table"):
+                        viz_type = visualization.get("chart_type") or visualization.get("type")
+                        has_table = viz_type == "table" or (visualization.get("headers") and visualization.get("rows") and not visualization.get("labels"))
+                        
+                        # CRITICAL: Only set table message if NOT a chart request
+                        if has_table and not is_chart_request and (is_table_request or viz_type == "table"):
                             answer = "The requested table is shown below."
                             logger.info("✅ Fallback: Fixed answer - replaced 'Not available' with table message")
-                        else:
+                        elif has_table and is_chart_request:
+                            # Chart requested but we have table - return error
+                            logger.error("❌ Fallback: Chart requested but table detected - blocking")
+                            visualization = None
+                            answer = "No structured numerical data available to generate a chart."
+                        elif not has_table:
                             answer = "Here is the visualization based on the document data."
                 
                 logger.info(f"Fallback: Generated answer length: {len(answer)} characters")
@@ -2244,24 +2253,44 @@ Answer:"""
                         if not answer or answer.strip() == "":
                             logger.error("Answer is still empty after checking result!")
                             answer = "I processed your question but couldn't generate a response. Please try rephrasing or check if the document contains relevant information."
-                    # CRITICAL: Check for visualization error and update answer
-                    if visualization and isinstance(visualization, dict) and "error" in visualization:
-                        answer = visualization.get("error", "No structured numerical data available to generate a chart.")
-                        visualization = None
-                    
-                    # CRITICAL: If we have a valid chart or table, don't show "Not available" message
+                    # CRITICAL: If we have a valid table or chart, NEVER show error
                     if visualization and isinstance(visualization, dict):
                         has_chart = visualization.get("labels") and visualization.get("values")
                         has_table = visualization.get("headers") and visualization.get("rows")
                         
-                        if has_table:
-                            # We have a table - use simple message
-                            if "not available" in answer.lower() or answer.strip() == "":
-                                answer = "The requested table is shown below."
-                        elif has_chart:
-                            # We have a chart - use chart message
-                            if "not available" in answer.lower() or answer.strip() == "":
-                                answer = "Here is the visualization based on the document data."
+                        # CRITICAL: If we have valid table/chart data, remove any error
+                        if has_table or has_chart:
+                            # Remove error if present
+                            if "error" in visualization:
+                                logger.warning("⚠️ Removing error from visualization - valid table/chart data exists")
+                                visualization.pop("error", None)
+                            
+                            # CRITICAL: Check if chart was requested
+                            question_lower_check = question.lower()
+                            is_chart_request_check = any(kw in question_lower_check for kw in [
+                                'chart', 'charts', 'graph', 'graphs', 'visualize', 'visualization', 'visualizations',
+                                'visualise', 'show chart', 'display chart', 'give me chart', 'give me charts',
+                                'generate chart', 'create chart', 'plot', 'plotting', 'show charts'
+                            ])
+                            
+                            if has_table:
+                                # We have a table - use simple message ONLY if NOT a chart request
+                                if not is_chart_request_check and ("not available" in answer.lower() or answer.strip() == "" or "error" in answer.lower()):
+                                    answer = "The requested table is shown below."
+                                elif is_chart_request_check:
+                                    # Chart requested but we have table - return error
+                                    logger.error("❌ Chart requested but table detected in invoke - blocking")
+                                    visualization = None
+                                    answer = "No structured numerical data available to generate a chart."
+                            elif has_chart:
+                                # We have a chart - use chart message
+                                if "not available" in answer.lower() or answer.strip() == "" or "error" in answer.lower():
+                                    answer = "Here is the visualization based on the document data."
+                        else:
+                            # No valid data - check for error
+                            if "error" in visualization:
+                                answer = visualization.get("error", "No structured numerical data available to generate a chart.")
+                                visualization = None
                     
                     return {
                         "answer": answer.strip() if answer else "I couldn't generate an answer. Please try rephrasing your question.",
@@ -2273,24 +2302,44 @@ Answer:"""
                     visualization = result.get("visualization")
                     logger.info(f"Found answer in result. Length: {len(answer)} characters")
                     
-                    # CRITICAL: Check for visualization error and update answer
-                    if visualization and isinstance(visualization, dict) and "error" in visualization:
-                        answer = visualization.get("error", "No structured numerical data available to generate a chart.")
-                        visualization = None
-                    
-                    # CRITICAL: If we have a valid chart or table, don't show "Not available" message
+                    # CRITICAL: If we have a valid table or chart, NEVER show error
                     if visualization and isinstance(visualization, dict):
                         has_chart = visualization.get("labels") and visualization.get("values")
                         has_table = visualization.get("headers") and visualization.get("rows")
                         
-                        if has_table:
-                            # We have a table - use simple message
-                            if "not available" in answer.lower() or answer.strip() == "":
-                                answer = "The requested table is shown below."
-                        elif has_chart:
-                            # We have a chart - use chart message
-                            if "not available" in answer.lower() or answer.strip() == "":
-                                answer = "Here is the visualization based on the document data."
+                        # CRITICAL: If we have valid table/chart data, remove any error
+                        if has_table or has_chart:
+                            # Remove error if present
+                            if "error" in visualization:
+                                logger.warning("⚠️ Removing error from visualization - valid table/chart data exists")
+                                visualization.pop("error", None)
+                            
+                            # CRITICAL: Check if chart was requested
+                            question_lower_check = question.lower()
+                            is_chart_request_check = any(kw in question_lower_check for kw in [
+                                'chart', 'charts', 'graph', 'graphs', 'visualize', 'visualization', 'visualizations',
+                                'visualise', 'show chart', 'display chart', 'give me chart', 'give me charts',
+                                'generate chart', 'create chart', 'plot', 'plotting', 'show charts'
+                            ])
+                            
+                            if has_table:
+                                # We have a table - use simple message ONLY if NOT a chart request
+                                if not is_chart_request_check and ("not available" in answer.lower() or answer.strip() == "" or "error" in answer.lower()):
+                                    answer = "The requested table is shown below."
+                                elif is_chart_request_check:
+                                    # Chart requested but we have table - return error
+                                    logger.error("❌ Chart requested but table detected in invoke - blocking")
+                                    visualization = None
+                                    answer = "No structured numerical data available to generate a chart."
+                            elif has_chart:
+                                # We have a chart - use chart message
+                                if "not available" in answer.lower() or answer.strip() == "" or "error" in answer.lower():
+                                    answer = "Here is the visualization based on the document data."
+                        else:
+                            # No valid data - check for error
+                            if "error" in visualization:
+                                answer = visualization.get("error", "No structured numerical data available to generate a chart.")
+                                visualization = None
                     
                     if answer and answer.strip():
                         return {

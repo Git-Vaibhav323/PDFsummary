@@ -741,11 +741,25 @@ async def chat(request: ChatRequest):
                 )
         
         # ============================================================
+        # CRITICAL: Remove errors from valid table/chart data
+        # ============================================================
+        if final_visualization and isinstance(final_visualization, dict):
+            has_chart = final_visualization.get("labels") and final_visualization.get("values")
+            has_table = final_visualization.get("headers") and final_visualization.get("rows")
+            
+            # If we have valid table/chart data, remove any error
+            if has_table or has_chart:
+                if "error" in final_visualization:
+                    logger.warning("⚠️ Removing error from final_visualization - valid table/chart data exists")
+                    final_visualization.pop("error", None)
+        
+        # ============================================================
         # FINAL SANITIZATION - ABSOLUTE LAST CHECK BEFORE RETURN
         # ============================================================
         # This is the FINAL boundary - no table can pass through
         final_chart_data = None
-        final_visualization = visualization
+        if not final_visualization:
+            final_visualization = visualization
         final_table = None
         
         if is_chart_request:
@@ -805,17 +819,29 @@ async def chat(request: ChatRequest):
             # Check if it's a chart (has labels/values)
             has_chart = final_visualization.get("labels") and final_visualization.get("values")
             
-            # PRIORITY: Check table first (more specific)
-            if has_table:
-                # We have a table - ALWAYS replace "Not available" message
-                if "not available" in final_answer.lower() or final_answer.strip() == "" or not final_answer:
-                    final_answer = "The requested table is shown below."
-                    logger.info("📤 Fixed answer: replaced 'Not available' with table message")
-            elif has_chart:
-                # We have a chart - use chart message
-                if "not available" in final_answer.lower() or final_answer.strip() == "" or not final_answer:
-                    final_answer = "Here is the visualization based on the document data."
-                    logger.info("📤 Fixed answer: replaced 'Not available' with chart description")
+            # PRIORITY: Check chart request first - NEVER set table message if chart requested
+            if is_chart_request:
+                if has_table:
+                    # Chart requested but we have table - this should have been blocked, but ensure error message
+                    logger.error("❌ CRITICAL: Chart requested but table detected in final answer fix - should not happen")
+                    final_answer = "No structured numerical data available to generate a chart."
+                elif has_chart:
+                    # We have a chart - use chart message
+                    if "not available" in final_answer.lower() or final_answer.strip() == "" or not final_answer:
+                        final_answer = "Here is the visualization based on the document data."
+                        logger.info("📤 Fixed answer: replaced 'Not available' with chart description")
+            else:
+                # Not a chart request - check table first (more specific)
+                if has_table:
+                    # We have a table - ALWAYS replace "Not available" message
+                    if "not available" in final_answer.lower() or final_answer.strip() == "" or not final_answer:
+                        final_answer = "The requested table is shown below."
+                        logger.info("📤 Fixed answer: replaced 'Not available' with table message")
+                elif has_chart:
+                    # We have a chart - use chart message
+                    if "not available" in final_answer.lower() or final_answer.strip() == "" or not final_answer:
+                        final_answer = "Here is the visualization based on the document data."
+                        logger.info("📤 Fixed answer: replaced 'Not available' with chart description")
         
         return ChatResponse(
             answer=final_answer,
