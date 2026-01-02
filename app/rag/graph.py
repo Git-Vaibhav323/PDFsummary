@@ -2373,10 +2373,23 @@ Answer:"""
                                 has_chart = visualization.get("labels") and visualization.get("values")
                                 has_table = visualization.get("headers") and visualization.get("rows")
                                 
+                                # CRITICAL: Check if chart was requested
+                                question_lower_check = question.lower()
+                                is_chart_request_check = any(kw in question_lower_check for kw in [
+                                    'chart', 'charts', 'graph', 'graphs', 'visualize', 'visualization', 'visualizations',
+                                    'visualise', 'show chart', 'display chart', 'give me chart', 'give me charts',
+                                    'generate chart', 'create chart', 'plot', 'plotting', 'show charts'
+                                ])
+                                
                                 if has_table:
-                                    # We have a table - use simple message
-                                    if "not available" in answer.lower() or answer.strip() == "":
+                                    # We have a table - use simple message ONLY if NOT a chart request
+                                    if not is_chart_request_check and ("not available" in answer.lower() or answer.strip() == ""):
                                         answer = "The requested table is shown below."
+                                    elif is_chart_request_check:
+                                        # Chart requested but we have table - return error
+                                        logger.error("❌ Chart requested but table detected in nested response - blocking")
+                                        visualization = None
+                                        answer = "No structured numerical data available to generate a chart."
                                 elif has_chart:
                                     # We have a chart - use chart message
                                     if "not available" in answer.lower() or answer.strip() == "":
@@ -2403,10 +2416,23 @@ Answer:"""
                                 has_chart = visualization.get("labels") and visualization.get("values")
                                 has_table = visualization.get("headers") and visualization.get("rows")
                                 
+                                # CRITICAL: Check if chart was requested
+                                question_lower_check = question.lower()
+                                is_chart_request_check = any(kw in question_lower_check for kw in [
+                                    'chart', 'charts', 'graph', 'graphs', 'visualize', 'visualization', 'visualizations',
+                                    'visualise', 'show chart', 'display chart', 'give me chart', 'give me charts',
+                                    'generate chart', 'create chart', 'plot', 'plotting', 'show charts'
+                                ])
+                                
                                 if has_table:
-                                    # We have a table - use simple message
-                                    if "not available" in answer.lower() or answer.strip() == "":
+                                    # We have a table - use simple message ONLY if NOT a chart request
+                                    if not is_chart_request_check and ("not available" in answer.lower() or answer.strip() == ""):
                                         answer = "The requested table is shown below."
+                                    elif is_chart_request_check:
+                                        # Chart requested but we have table - return error
+                                        logger.error("❌ Chart requested but table detected in nested response - blocking")
+                                        visualization = None
+                                        answer = "No structured numerical data available to generate a chart."
                                 elif has_chart:
                                     # We have a chart - use chart message
                                     if "not available" in answer.lower() or answer.strip() == "":
