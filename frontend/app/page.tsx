@@ -16,7 +16,12 @@ interface Message {
     image_base64?: string;
     markdown?: string;
     chart_type?: string;
+    type?: string;
     title?: string;
+    labels?: string[];
+    values?: number[];
+    xAxis?: string;
+    yAxis?: string;
     headers?: string[];
     rows?: string[][];
     error?: string;
@@ -74,15 +79,106 @@ export default function Home() {
         }
 
         // Add assistant message
-        // DEBUG: Log visualization object
-        console.log("Response visualization:", response.visualization);
-        console.log("Has headers:", response.visualization?.headers);
-        console.log("Has rows:", response.visualization?.rows);
+        // Map backend response to the UI's `visualization` shape
+        let visualization = undefined;
+
+        // PRIORITY 1: Check if visualization field exists (current backend format)
+        if (response.visualization) {
+          // Check for error first
+          if (response.visualization.error) {
+            console.warn("Visualization error from backend:", response.visualization.error);
+            visualization = undefined; // Don't render error
+          } else if (response.visualization.headers && response.visualization.rows) {
+            // Table format with headers and rows
+            visualization = {
+              chart_type: response.visualization.chart_type || 'table',
+              type: response.visualization.chart_type || 'table',
+              headers: response.visualization.headers,
+              rows: response.visualization.rows,
+              title: response.visualization.title,
+              markdown: response.visualization.markdown, // Keep markdown if available
+            };
+          } else if (response.visualization.labels && response.visualization.values) {
+            // Chart format with labels and values
+            visualization = {
+              chart_type: response.visualization.chart_type || response.visualization.type,
+              type: response.visualization.chart_type || response.visualization.type,
+              title: response.visualization.title,
+              labels: response.visualization.labels,
+              values: response.visualization.values,
+              groups: response.visualization.groups,  // For stacked bar charts
+              xAxis: response.visualization.xAxis,
+              yAxis: response.visualization.yAxis,
+            };
+          } else if (response.visualization.markdown) {
+            // Markdown table
+            visualization = {
+              markdown: response.visualization.markdown,
+              chart_type: 'table',
+            };
+          } else if (response.visualization.image_base64) {
+            // Base64 image
+            visualization = {
+              image_base64: response.visualization.image_base64,
+              title: response.visualization.title,
+            };
+          }
+        }
         
+        // PRIORITY 2: Check chart field (alternative format)
+        if (!visualization && response.chart) {
+          if (response.chart.type === 'table' && response.chart.headers && response.chart.rows) {
+            visualization = {
+              chart_type: 'table',
+              headers: response.chart.headers,
+              rows: response.chart.rows,
+              title: response.chart.title || undefined,
+            };
+          } else if (response.chart.type && response.chart.labels && response.chart.values) {
+            visualization = {
+              chart_type: response.chart.type,
+              type: response.chart.type,
+              title: response.chart.title || undefined,
+              labels: response.chart.labels,
+              values: response.chart.values,
+              xAxis: response.chart.xAxis,
+              yAxis: response.chart.yAxis,
+            };
+          }
+        }
+        
+        // PRIORITY 3: Check table field (markdown string)
+        if (!visualization && response.table) {
+          visualization = { 
+            markdown: response.table,
+            chart_type: 'table',
+          };
+        }
+
+        console.log("=== FULL API RESPONSE ===");
+        console.log(JSON.stringify(response, null, 2));
+        console.log("=== CHART DATA ===");
+        console.log(response.chart);
+        console.log("=== TABLE DATA ===");
+        console.log(response.table);
+        console.log("=== MAPPED VISUALIZATION ===");
+        console.log(visualization);
+        
+        // CRITICAL DEBUG: Log what we're about to send to ChatMessage
+        if (visualization) {
+          console.log("✅ Visualization will be rendered");
+          if (visualization.headers) console.log(`  - Headers: ${visualization.headers.length} columns`);
+          if (visualization.rows) console.log(`  - Rows: ${visualization.rows.length} rows`);
+          if (visualization.labels) console.log(`  - Labels: ${visualization.labels.length} items`);
+          if (visualization.values) console.log(`  - Values: ${visualization.values.length} items`);
+        } else {
+          console.warn("❌ No visualization data to render!");
+        }
+
         const assistantMessage: Message = {
           role: "assistant",
           content: response.answer,
-          visualization: response.visualization || undefined,
+          visualization: visualization || undefined,
           timestamp: new Date(),
         };
         setMessages((prev) => [...prev, assistantMessage]);

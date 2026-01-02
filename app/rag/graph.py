@@ -699,13 +699,14 @@ Answer:"""
             has_percentages = bool(re.search(r'\d+%', context_text))
             has_tables = bool(re.search(r'\|\s*\w+', context_text) or 'table' in context_text.lower())
             has_comparisons = bool(re.search(r'\d+\s*(vs|versus|compared|than|more|less)', context_text, re.IGNORECASE))
-            # Look for financial/metric keywords with numbers
+            # Look for financial/metric keywords with numbers - ENHANCED for financial data
+            financial_terms = r'\b(revenue|profit|sales|cost|budget|amount|value|percentage|ratio|count|total|average|growth|rate|income|expense|asset|liability|equity|earnings|margin|balance|statement|p&l|cash flow|financial)'
             has_meaningful_numbers = bool(
-                re.search(r'\b(revenue|profit|sales|cost|budget|amount|value|percentage|ratio|count|total|average|growth|rate)\s*[:\-]?\s*\d+', 
+                re.search(f'{financial_terms}\s*[:\-]?\s*\d+', context_text, re.IGNORECASE) or
+                re.search(r'\d+\s*(revenue|profit|sales|cost|budget|amount|value|percentage|ratio|count|total|average|growth|rate|income|expense|asset|liability|equity|earnings|margin|balance)', 
                          context_text, re.IGNORECASE) or
-                re.search(r'\d+\s*(revenue|profit|sales|cost|budget|amount|value|percentage|ratio|count|total|average|growth|rate)', 
-                         context_text, re.IGNORECASE) or
-                re.search(r'\b(19|20)\d{2}\s*[:\-]?\s*\d+', context_text)  # Year with value
+                re.search(r'\b(19|20)\d{2}\s*[:\-]?\s*\d+', context_text) or  # Year with value
+                re.search(r'\b(balance sheet|income statement|cash flow|p&l|profit & loss|financial statement)', context_text, re.IGNORECASE)  # Financial statements
             )
             
             # Check user intent keywords
@@ -714,10 +715,18 @@ Answer:"""
             user_wants_viz = any(keyword in question_lower for keyword in visualization_keywords)
             # CRITICAL: Explicit table requests must always enable visualization path
             user_wants_table = "table" in question_lower
+            # Financial data keywords - always trigger visualization
+            financial_keywords = [
+                "revenue", "profit", "sales", "cost", "budget", "balance", "income", "expense", 
+                "asset", "liability", "equity", "earnings", "margin", "ratio", "growth", 
+                "financial", "statement", "p&l", "profit & loss", "cash flow", "balance sheet",
+                "income statement", "financial data", "financial metrics", "financial performance"
+            ]
+            user_asks_financial = any(keyword in question_lower for keyword in financial_keywords)
             
             # If meaningful numerical data exists OR user explicitly asks for visualization, generate chart
-            if has_percentages or has_tables or has_comparisons or has_meaningful_numbers or user_wants_viz or user_wants_table:
-                logger.info(f"Meaningful numerical data detected or user requested visualization - enabling chart generation")
+            if has_percentages or has_tables or has_comparisons or has_meaningful_numbers or user_wants_viz or user_wants_table or user_asks_financial:
+                logger.info(f"Meaningful numerical data detected or user requested visualization (financial: {user_asks_financial}) - enabling chart generation")
                 return {**state, "needs_visualization": True}
             
             # Fallback: Use LLM to detect if visualization is needed
@@ -811,11 +820,14 @@ Answer:"""
                         
                         if headers and rows and len(headers) >= 2 and len(rows) >= 1:
                             logger.info(f"✅ Successfully extracted table from context: {len(headers)} columns, {len(rows)} rows")
+                            # Normalize table structure
+                            from app.rag.table_normalizer import TableNormalizer
+                            normalized_table = TableNormalizer.normalize_table(headers, rows, "Document Table")
                             extracted_data = {
                                 "chart_type": "table",
-                                "headers": headers,
-                                "rows": rows,
-                                "title": "Document Table"
+                                "headers": normalized_table["headers"],
+                                "rows": normalized_table["rows"],
+                                "title": normalized_table["title"]
                             }
                             return {**state, "extracted_data_for_chart": extracted_data}
                     except Exception as direct_parse_error:
@@ -843,7 +855,17 @@ Answer:"""
                         headers = extracted_data.get("headers", [])
                         rows = extracted_data.get("rows", [])
                         if headers and rows and len(headers) >= 2 and len(rows) >= 1:
-                            logger.info(f"✅ Successfully extracted table with {len(headers)} columns and {len(rows)} rows")
+                            # Normalize table structure
+                            from app.rag.table_normalizer import TableNormalizer
+                            normalized_table = TableNormalizer.normalize_table(
+                                headers, 
+                                rows, 
+                                extracted_data.get("title")
+                            )
+                            extracted_data["headers"] = normalized_table["headers"]
+                            extracted_data["rows"] = normalized_table["rows"]
+                            extracted_data["title"] = normalized_table["title"]
+                            logger.info(f"✅ Successfully extracted and normalized table: {len(normalized_table['headers'])} columns, {len(normalized_table['rows'])} rows")
                             return {**state, "extracted_data_for_chart": extracted_data}
                         else:
                             logger.warning(f"Table data validation failed - headers: {len(headers) if headers else 0}, rows: {len(rows) if rows else 0}")
@@ -1041,12 +1063,17 @@ Answer:"""
             
             if has_chart_data or has_table_data:
                 logger.error(f"Visualization generation failed after {max_retries} attempts: {last_error}")
-                return {
-                    **state,
-                    "visualization": {
-                        "error": "Visualization could not be generated due to an internal error."
+                # Check if chart was requested
+                question = state.get("question", "").lower()
+                is_chart_req = any(kw in question for kw in ['chart', 'charts', 'graph', 'graphs', 'visualize', 'visualization'])
+                if is_chart_req:
+                    # Update answer to error message instead of setting error in visualization
+                    return {
+                        **state,
+                        "visualization": None,
+                        "answer": "No structured numerical data available to generate a chart."
                     }
-                }
+                return {**state, "visualization": None}
             
             return {**state, "visualization": None}
         except Exception as e:
@@ -1066,6 +1093,31 @@ Answer:"""
             logger.info(f"Answer preview: {answer[:200] if answer else 'EMPTY'}...")
             logger.info(f"Visualization present: {visualization is not None}")
             logger.info(f"Extracted data present: {extracted_data is not None}")
+            
+            # ============================================================
+            # GLOBAL CHART INTENT DETECTION - MUST BE FIRST
+            # ============================================================
+            question_lower = question.lower()
+            is_chart_request = any(kw in question_lower for kw in [
+                'chart', 'charts', 'graph', 'graphs', 'visualize', 'visualization', 'visualizations',
+                'visualise', 'show chart', 'display chart', 'give me chart', 'give me charts',
+                'generate chart', 'create chart', 'plot', 'plotting', 'show charts'
+            ])
+            
+            logger.info(f"🎯 GRAPH FINALIZE: is_chart_request = {is_chart_request}")
+            
+            # ============================================================
+            # CRITICAL EARLY BLOCK: If chart requested and visualization is table, BLOCK NOW
+            # ============================================================
+            if is_chart_request and visualization and isinstance(visualization, dict):
+                viz_chart_type = visualization.get("chart_type") or visualization.get("type")
+                if viz_chart_type == "table":
+                    logger.error(f"❌ GRAPH FINALIZE BLOCK: visualization is table when chart requested - setting to None")
+                    visualization = None  # Will trigger error response
+                # Check for headers/rows without labels/values (hidden table)
+                elif visualization.get("headers") and visualization.get("rows") and not visualization.get("labels"):
+                    logger.error(f"❌ GRAPH FINALIZE BLOCK: visualization has headers/rows but no labels - setting to None")
+                    visualization = None  # Will trigger error response
             
             # CRITICAL: If answer is empty, something went wrong - use fallback
             if not answer or not answer.strip():
@@ -1095,9 +1147,9 @@ Answer:"""
             # Store original answer before cleaning (in case cleaning removes everything)
             original_answer = answer
             
-            # Check if user asked for tables
-            question_lower = question.lower()
-            is_table_request = "table" in question_lower or "tabular" in question_lower
+            # Check if user asked for tables (but NOT if they asked for charts)
+            # question_lower already defined above
+            is_table_request = ("table" in question_lower or "tabular" in question_lower) and not is_chart_request
             
             # CRITICAL FIX: If visualization is None but we have numerical data, force chart generation
             if not visualization or (isinstance(visualization, dict) and "error" in visualization):
@@ -1345,7 +1397,10 @@ Answer:"""
                                 logger.info("Successfully generated chart in finalize_response_node")
                         except Exception as e:
                             logger.error(f"Failed to generate chart in finalize_response: {e}")
-                            visualization = {"error": "Visualization could not be generated due to an internal error."}
+                            visualization = None  # Don't set error object, just return None
+                            # Update answer if chart was requested
+                            if is_chart_request:
+                                answer = "No structured numerical data available to generate a chart."
                 else:
                     # Check if context has numerical data and user asked for visualization
                     question_lower = question.lower()
@@ -1869,6 +1924,39 @@ Answer:"""
                 else:
                     logger.info(f"Visualization ready: {len(visualization.get('headers'))} headers, {len(visualization.get('rows'))} rows")
             
+            # ============================================================
+            # FINAL GRAPH GUARD: If chart requested, NEVER return table
+            # ============================================================
+            if is_chart_request and visualization and isinstance(visualization, dict):
+                viz_chart_type = visualization.get("chart_type") or visualization.get("type")
+                has_table_structure = (visualization.get("headers") and visualization.get("rows") and 
+                                       not visualization.get("labels") and not visualization.get("values"))
+                
+                if viz_chart_type == "table" or has_table_structure:
+                    logger.error(f"❌ FINAL GRAPH GUARD: Chart requested but visualization is table - BLOCKING")
+                    visualization = None
+                    answer = "No structured numerical data available to generate a chart."
+            
+            # ============================================================
+            # FINAL CHECK: Fix answer if we have table but answer says "not available"
+            # ============================================================
+            question_lower_final = question.lower()
+            is_table_request_final = ("table" in question_lower_final or "tabular" in question_lower_final) and not is_chart_request
+            
+            if visualization and isinstance(visualization, dict):
+                viz_type = visualization.get("chart_type") or visualization.get("type")
+                has_table = viz_type == "table" or (visualization.get("headers") and visualization.get("rows"))
+                
+                # CRITICAL: Only set table message if NOT a chart request
+                if has_table and not is_chart_request and (not answer or "not available" in answer.lower()):
+                    answer = "The requested table is shown below."
+                    logger.info("✅ FINALIZE FINAL CHECK: Fixed answer - replaced 'Not available' with table message")
+                elif has_table and is_chart_request:
+                    # Chart requested but we have table - should have been blocked above, but double-check
+                    logger.error("❌ FINALIZE FINAL CHECK: Chart requested but table detected - should have been blocked")
+                    visualization = None
+                    answer = "No structured numerical data available to generate a chart."
+            
             final_response = {
                 "answer": answer,
                 "visualization": visualization
@@ -2074,17 +2162,58 @@ Answer:"""
                     except Exception as table_error:
                         logger.error(f"Fallback: Table extraction failed: {table_error}", exc_info=True)
                 
-                # Generate answer
-                from app.rag.prompts import RAG_PROMPT
-                prompt = RAG_PROMPT.format(context=context_text, question=question)
-                logger.info("Fallback: Invoking LLM for answer...")
-                response = self.llm.invoke(prompt)
-                answer = response.content if hasattr(response, 'content') else str(response)
-                answer = answer.strip()
+                # Check if user asked for chart vs table
+                question_lower = question.lower()
+                is_chart_request = any(kw in question_lower for kw in [
+                    'chart', 'charts', 'graph', 'graphs', 'visualize', 'visualization',
+                    'visualise', 'show chart', 'display chart', 'give me chart',
+                    'generate chart', 'create chart', 'plot', 'plotting', 'show charts'
+                ])
                 
-                # If we have visualization, use simple message
+                # CRITICAL: Check for table BEFORE generating answer
+                is_table_request = "table" in question_lower or "tabular" in question_lower
+                answer = None
+                
                 if visualization:
-                    answer = "The requested table is shown below."
+                    viz_type = visualization.get("chart_type") or visualization.get("type")
+                    has_table_structure = visualization.get("headers") and visualization.get("rows") and not visualization.get("labels")
+                    
+                    if is_chart_request and (viz_type == "table" or has_table_structure):
+                        # Chart requested but we have table - return error
+                        logger.error("❌ FALLBACK BLOCK: Chart requested but visualization is table - blocking")
+                        visualization = None
+                        answer = "No structured numerical data available to generate a chart."
+                    elif (is_table_request or viz_type == "table" or has_table_structure) and not is_chart_request:
+                        # Table requested and we have table - set answer immediately (SKIP LLM)
+                        # CRITICAL: Only set if NOT a chart request
+                        if not is_chart_request:
+                            answer = "The requested table is shown below."
+                            logger.info("✅ Fallback: Table found - setting answer to table message (skipping LLM)")
+                        else:
+                            # Chart requested but we have table - return error
+                            logger.error("❌ Fallback: Chart requested but table detected - blocking")
+                            visualization = None
+                            answer = "No structured numerical data available to generate a chart."
+                    elif not is_chart_request:
+                        # We have a chart visualization - set answer
+                        answer = "Here is the visualization based on the document data."
+                
+                # Only call LLM if we don't have a valid visualization or answer
+                if not answer:
+                    from app.rag.prompts import RAG_PROMPT
+                    prompt = RAG_PROMPT.format(context=context_text, question=question)
+                    logger.info("Fallback: Invoking LLM for answer...")
+                    response = self.llm.invoke(prompt)
+                    answer = response.content if hasattr(response, 'content') else str(response)
+                    answer = answer.strip()
+                    
+                    # CRITICAL: If we have visualization but answer says "Not available", fix it
+                    if visualization and "not available" in answer.lower():
+                        if is_table_request or (visualization.get("chart_type") == "table" or visualization.get("type") == "table"):
+                            answer = "The requested table is shown below."
+                            logger.info("✅ Fallback: Fixed answer - replaced 'Not available' with table message")
+                        else:
+                            answer = "Here is the visualization based on the document data."
                 
                 logger.info(f"Fallback: Generated answer length: {len(answer)} characters")
                 logger.info(f"Fallback: Visualization present: {visualization is not None}")
@@ -2115,6 +2244,25 @@ Answer:"""
                         if not answer or answer.strip() == "":
                             logger.error("Answer is still empty after checking result!")
                             answer = "I processed your question but couldn't generate a response. Please try rephrasing or check if the document contains relevant information."
+                    # CRITICAL: Check for visualization error and update answer
+                    if visualization and isinstance(visualization, dict) and "error" in visualization:
+                        answer = visualization.get("error", "No structured numerical data available to generate a chart.")
+                        visualization = None
+                    
+                    # CRITICAL: If we have a valid chart or table, don't show "Not available" message
+                    if visualization and isinstance(visualization, dict):
+                        has_chart = visualization.get("labels") and visualization.get("values")
+                        has_table = visualization.get("headers") and visualization.get("rows")
+                        
+                        if has_table:
+                            # We have a table - use simple message
+                            if "not available" in answer.lower() or answer.strip() == "":
+                                answer = "The requested table is shown below."
+                        elif has_chart:
+                            # We have a chart - use chart message
+                            if "not available" in answer.lower() or answer.strip() == "":
+                                answer = "Here is the visualization based on the document data."
+                    
                     return {
                         "answer": answer.strip() if answer else "I couldn't generate an answer. Please try rephrasing your question.",
                         "visualization": visualization
@@ -2124,6 +2272,26 @@ Answer:"""
                     answer = result["answer"]
                     visualization = result.get("visualization")
                     logger.info(f"Found answer in result. Length: {len(answer)} characters")
+                    
+                    # CRITICAL: Check for visualization error and update answer
+                    if visualization and isinstance(visualization, dict) and "error" in visualization:
+                        answer = visualization.get("error", "No structured numerical data available to generate a chart.")
+                        visualization = None
+                    
+                    # CRITICAL: If we have a valid chart or table, don't show "Not available" message
+                    if visualization and isinstance(visualization, dict):
+                        has_chart = visualization.get("labels") and visualization.get("values")
+                        has_table = visualization.get("headers") and visualization.get("rows")
+                        
+                        if has_table:
+                            # We have a table - use simple message
+                            if "not available" in answer.lower() or answer.strip() == "":
+                                answer = "The requested table is shown below."
+                        elif has_chart:
+                            # We have a chart - use chart message
+                            if "not available" in answer.lower() or answer.strip() == "":
+                                answer = "Here is the visualization based on the document data."
+                    
                     if answer and answer.strip():
                         return {
                             "answer": answer.strip(),
@@ -2145,6 +2313,26 @@ Answer:"""
                             answer = final.get("answer", "")
                             visualization = final.get("visualization")
                             logger.info(f"Found final_response in nested key '{key}'. Answer length: {len(answer)} characters")
+                            
+                            # CRITICAL: Check for visualization error and update answer
+                            if visualization and isinstance(visualization, dict) and "error" in visualization:
+                                answer = visualization.get("error", "No structured numerical data available to generate a chart.")
+                                visualization = None
+                            
+                            # CRITICAL: If we have a valid chart or table, don't show "Not available" message
+                            if visualization and isinstance(visualization, dict):
+                                has_chart = visualization.get("labels") and visualization.get("values")
+                                has_table = visualization.get("headers") and visualization.get("rows")
+                                
+                                if has_table:
+                                    # We have a table - use simple message
+                                    if "not available" in answer.lower() or answer.strip() == "":
+                                        answer = "The requested table is shown below."
+                                elif has_chart:
+                                    # We have a chart - use chart message
+                                    if "not available" in answer.lower() or answer.strip() == "":
+                                        answer = "Here is the visualization based on the document data."
+                            
                             if not answer or answer.strip() == "":
                                 answer = "I processed your question but couldn't generate a response. Please try rephrasing or check if the document contains relevant information."
                             return {
@@ -2155,6 +2343,26 @@ Answer:"""
                             answer = value["answer"]
                             visualization = value.get("visualization")
                             logger.info(f"Found answer in nested key '{key}'. Length: {len(answer)} characters")
+                            
+                            # CRITICAL: Check for visualization error and update answer
+                            if visualization and isinstance(visualization, dict) and "error" in visualization:
+                                answer = visualization.get("error", "No structured numerical data available to generate a chart.")
+                                visualization = None
+                            
+                            # CRITICAL: If we have a valid chart or table, don't show "Not available" message
+                            if visualization and isinstance(visualization, dict):
+                                has_chart = visualization.get("labels") and visualization.get("values")
+                                has_table = visualization.get("headers") and visualization.get("rows")
+                                
+                                if has_table:
+                                    # We have a table - use simple message
+                                    if "not available" in answer.lower() or answer.strip() == "":
+                                        answer = "The requested table is shown below."
+                                elif has_chart:
+                                    # We have a chart - use chart message
+                                    if "not available" in answer.lower() or answer.strip() == "":
+                                        answer = "Here is the visualization based on the document data."
+                            
                             if not answer or answer.strip() == "":
                                 answer = "I processed your question but couldn't generate a response. Please try rephrasing or check if the document contains relevant information."
                             return {
@@ -2196,4 +2404,3 @@ Answer:"""
             except Exception as fallback_error:
                 logger.error(f"Fallback also failed: {fallback_error}")
                 return {"answer": f"Error: {str(e)}", "visualization": None}
-

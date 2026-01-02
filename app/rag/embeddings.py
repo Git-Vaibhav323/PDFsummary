@@ -17,7 +17,7 @@ class LocalEmbeddings:
         """Initialize local embeddings using sentence-transformers."""
         self._model = None
         self.model_name = getattr(settings, 'embedding_model', 'all-MiniLM-L6-v2')
-    
+            
     def _ensure_initialized(self):
         """Lazy-load the embedding model on first use."""
         if self._model is not None:

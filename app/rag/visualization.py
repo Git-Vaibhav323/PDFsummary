@@ -678,6 +678,20 @@ class VisualizationGenerator:
                 
                 return cell_str
             
+            # CRITICAL: Normalize table structure before generating
+            from app.rag.table_normalizer import TableNormalizer
+            normalized = TableNormalizer.normalize_table(headers, rows, title)
+            headers = normalized["headers"]
+            rows = normalized["rows"]
+            title = normalized["title"]
+            
+            # CRITICAL: Normalize table structure before generating
+            from app.rag.table_normalizer import TableNormalizer
+            normalized = TableNormalizer.normalize_table(headers, rows, title)
+            headers = normalized["headers"]
+            rows = normalized["rows"]
+            title = normalized["title"]
+            
             # Format all cells
             formatted_rows = []
             for row in rows:
@@ -708,11 +722,11 @@ class VisualizationGenerator:
                 # Ensure row has same length as headers (CRITICAL: same number of columns)
                 row_padded = row[:len(headers)]
                 while len(row_padded) < len(headers):
-                    row_padded.append("-")  # Use "-" for empty cells
+                    row_padded.append("")  # Use empty string for empty cells
                 row_padded = row_padded[:len(headers)]  # Ensure exact match
                 
                 # Format row cells
-                row_cells = [str(cell).strip() if cell else "-" for cell in row_padded]
+                row_cells = [str(cell).strip() if cell else "" for cell in row_padded]
                 data_row = "| " + " | ".join(row_cells) + " |"
                 data_rows.append(data_row)
             
@@ -728,7 +742,7 @@ class VisualizationGenerator:
                 "chart_type": "table",
                 "markdown": markdown_table,
                 "headers": headers,
-                "rows": formatted_rows,  # Return formatted rows
+                "rows": formatted_rows,  # Return normalized and formatted rows
                 "title": title
             }
         except Exception as e:

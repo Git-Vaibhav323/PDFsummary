@@ -11,7 +11,12 @@ interface Message {
     image_base64?: string;
     markdown?: string;
     chart_type?: string;
+    type?: string;
     title?: string;
+    labels?: string[];
+    values?: number[];
+    xAxis?: string;
+    yAxis?: string;
     headers?: string[];
     rows?: string[][];
     error?: string;

@@ -1,85 +1,127 @@
 """
-FastAPI routes for PDF upload and chat functionality.
+FastAPI routes for enterprise RAG chatbot.
+
+Integrates:
+- High-performance document ingestion
+- RAG retrieval with memory
+- Visualization pipeline
+- Standardized API responses
 """
 import os
-import shutil
+import asyncio
+import logging
 from typing import Optional
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
-import logging
+import re
+
+from app.config.settings import settings
+from app.rag.rag_system import get_rag_system, initialize_rag_system
+from app.rag.pdf_loader import PDFLoader
+from app.rag.memory import clear_memory
+from app.database.conversations import ConversationStorage
 
 logger = logging.getLogger(__name__)
 
-# Lazy import heavy dependencies to speed up startup
-def _lazy_imports():
-    """Import heavy dependencies only when needed."""
-    global PDFLoader, TextChunker, VectorStore, ContextRetriever, RAGGraph, ConversationStorage, settings
-    from app.rag.pdf_loader import PDFLoader
-    from app.rag.chunker import TextChunker
-    from app.rag.vector_store import VectorStore
-    from app.rag.retriever import ContextRetriever
-    from app.rag.graph import RAGGraph
-    from app.config.settings import settings
-    from app.database.conversations import ConversationStorage
-    return PDFLoader, TextChunker, VectorStore, ContextRetriever, RAGGraph, settings, ConversationStorage
 
-# Initialize variables
-PDFLoader = TextChunker = VectorStore = ContextRetriever = RAGGraph = settings = ConversationStorage = None
+# Request/Response Models
+class ChatRequest(BaseModel):
+    """Chat request model."""
+    question: str
+    conversation_id: Optional[str] = None
 
-# Initialize components - ALL lazy loaded
-vector_store = None
-retriever = None
-rag_graph = None
+
+class ChatResponse(BaseModel):
+    """Chat response model."""
+    answer: str
+    table: Optional[str] = None
+    chart: Optional[dict] = None
+    visualization: Optional[dict] = None  # Frontend-compatible visualization format
+    chat_history: Optional[list] = None
+    conversation_id: Optional[str] = None
+
+
+class UploadResponse(BaseModel):
+    """File upload response model."""
+    message: str
+    pages: int
+    chunks: int
+    document_ids: int
+
+
+class StatusResponse(BaseModel):
+    """System status response."""
+    initialized: bool
+    vector_store_ready: bool
+    memory_messages: int
+    config: dict
+
+
+class ClearMemoryResponse(BaseModel):
+    """Clear memory response."""
+    message: str
+    success: bool
+
+
+class ConversationResponse(BaseModel):
+    """Conversation response model."""
+    id: str
+    title: str
+    created_at: str
+    updated_at: str
+    message_count: int
+
+
+class CreateConversationRequest(BaseModel):
+    """Create conversation request model."""
+    title: Optional[str] = None
+
+
+# Global conversation storage
 conversation_storage = None
-_components_loaded = False
 
-def ensure_components_loaded():
-    """Ensure all components are loaded - called on first use."""
-    global conversation_storage, _components_loaded, PDFLoader, TextChunker, VectorStore, ContextRetriever, RAGGraph, settings, ConversationStorage
-    
-    if _components_loaded:
-        return
-    
-    logger.info("🔄 Loading components on first use...")
-    
-    # Import heavy modules
-    _lazy_imports()
-    
-    # Initialize conversation storage
-    conversation_storage = ConversationStorage()
-    
-    _components_loaded = True
-    logger.info("✅ All components loaded")
 
+def get_conversation_storage() -> ConversationStorage:
+    """Get conversation storage instance (lazy loaded)."""
+    global conversation_storage
+    if conversation_storage is None:
+        conversation_storage = ConversationStorage()
+    return conversation_storage
+
+
+# Lifespan context manager
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifespan context manager for startup/shutdown."""
-    # Startup - NO initialization, just log
+    # Startup
     logger.info("🚀 FastAPI application starting...")
-    logger.info("✅ Application ready - components will load on first request")
+    try:
+        initialize_rag_system()
+        logger.info("✅ RAG system initialized")
+    except Exception as e:
+        logger.warning(f"RAG system initialization deferred to first request: {e}")
+    
     yield
+    
     # Shutdown
     logger.info("👋 Application shutting down...")
 
+
 # FastAPI app
 app = FastAPI(
-    title="PDF Chatbot",
-    description="Production-ready RAG chatbot for PDF documents",
-    version="1.0.0",
+    title="Enterprise RAG Chatbot",
+    description="High-performance RAG chatbot for PDF documents",
+    version="2.0.0",
     lifespan=lifespan
 )
 
-# CORS configuration - allow Netlify domains and localhost for development
-import os
-import re
 
-# Get allowed origins from environment or use defaults
+# CORS configuration
 allowed_origins_env = os.environ.get("ALLOWED_ORIGINS", "")
 if allowed_origins_env:
-    # Parse comma-separated origins from environment
     allowed_origins = [origin.strip() for origin in allowed_origins_env.split(",")]
 else:
     # Default origins for development
@@ -98,56 +140,26 @@ else:
         "http://127.0.0.1:3005",
     ]
 
-# Pattern to match Netlify deploy previews and production
+# Pattern to match Netlify deploy previews
 netlify_pattern = re.compile(r"https://.*\.netlify\.app$")
 
-def check_cors_origin(origin: str, allowed_origins: list) -> bool:
-    """Check if origin is allowed, including Netlify pattern matching."""
+def check_cors_origin(origin: str) -> bool:
+    """Check if origin is allowed."""
     if origin in allowed_origins:
         return True
-    # Check if it's a Netlify URL (production or deploy preview)
     if netlify_pattern.match(origin):
         return True
     return False
 
-# Custom CORS middleware configuration
-from fastapi.middleware.cors import CORSMiddleware as BaseCORSMiddleware
 
-class CustomCORSMiddleware(BaseCORSMiddleware):
-    """Custom CORS middleware that handles Netlify deploy previews."""
-    
-    def __init__(self, app, **kwargs):
-        # Remove allow_origins from kwargs as we'll handle it custom
-        self.allowed_origins = kwargs.pop('allow_origins', [])
-        super().__init__(app, allow_origins=[], **kwargs)
-    
-    def is_allowed_origin(self, origin: str) -> bool:
-        """Check if origin is allowed."""
-        return check_cors_origin(origin, self.allowed_origins)
-
-# Add CORS middleware for React frontend
 app.add_middleware(
-    CustomCORSMiddleware,
+    CORSMiddleware,
     allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
     allow_origin_regex=r"https://.*\.netlify\.app",
 )
-
-
-# Request/Response Models
-class ChatRequest(BaseModel):
-    """Chat request model."""
-    question: str
-    conversation_id: Optional[str] = None
-
-
-class ChatResponse(BaseModel):
-    """Chat response model."""
-    answer: str
-    visualization: Optional[dict] = None
-    conversation_id: Optional[str] = None
 
 
 class CreateConversationRequest(BaseModel):
@@ -165,7 +177,7 @@ class ConversationResponse(BaseModel):
 
 
 # Routes
-@app.post("/upload_pdf")
+@app.post("/upload_pdf", response_model=UploadResponse)
 async def upload_pdf(file: UploadFile = File(...)):
     """
     Upload and process a PDF file.
@@ -174,21 +186,20 @@ async def upload_pdf(file: UploadFile = File(...)):
         file: PDF file upload
         
     Returns:
-        Success message with processing details
+        Upload response with processing details
     """
-    global vector_store
-    
-    # Ensure all components are loaded first
-    ensure_components_loaded()
-    
     if not file.filename.endswith('.pdf'):
         raise HTTPException(status_code=400, detail="File must be a PDF")
     
-    # Save uploaded file temporarily
     temp_path = f"./temp_{file.filename}"
+    
     try:
+        # Save file
         with open(temp_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
+            content = await file.read()
+            buffer.write(content)
+        
+        logger.info(f"Processing PDF: {file.filename}")
         
         # Load PDF
         pdf_loader = PDFLoader()
@@ -197,105 +208,52 @@ async def upload_pdf(file: UploadFile = File(...)):
         if not pdf_data or not pdf_data.get("pages"):
             raise HTTPException(status_code=400, detail="PDF is empty or cannot be read")
         
-        # Run preprocessing pipeline (OCR, cleaning, structured data extraction)
-        try:
-            from app.rag.preprocessing_graph import PreprocessingGraph
-            import os
-            mistral_key = os.getenv("MISTRAL_API_KEY")
-            preprocessing = PreprocessingGraph(mistral_api_key=mistral_key)
-            processed_data = preprocessing.process(temp_path, pdf_data)
-            
-            # Update pdf_data with processed results
-            pdf_data["text"] = processed_data["text"]
-            pdf_data["pages"] = processed_data["pages"]
-            pdf_data["structured_data"] = processed_data.get("structured_data", [])
-            
-            if processed_data.get("error"):
-                logger.warning(f"Preprocessing warning: {processed_data['error']}")
-        except Exception as preprocess_error:
-            logger.warning(f"Preprocessing failed, using original PDF data: {preprocess_error}")
-            # Continue with original data if preprocessing fails
+        pages = pdf_data.get("pages", [])
+        total_pages = pdf_data.get("total_pages", len(pages))
         
-        # Chunk text
-        chunker = TextChunker(
-            chunk_size=settings.chunk_size,
-            chunk_overlap=settings.chunk_overlap
+        # Get RAG system and ingest
+        rag_system = get_rag_system()
+        
+        # Generate document ID
+        import uuid
+        document_id = str(uuid.uuid4())
+        
+        # Ingest document asynchronously
+        result = await rag_system.ingest_document_async(
+            document_id=document_id,
+            pages=pages,
+            filename=file.filename
         )
-        chunks = chunker.chunk_pages(pdf_data["pages"])
         
-        if not chunks:
-            raise HTTPException(status_code=400, detail="No text chunks could be created")
+        if not result.get("success"):
+            raise HTTPException(
+                status_code=500,
+                detail=f"Document ingestion failed: {result.get('error')}"
+            )
         
-        # Clear old documents before adding new ones to avoid mixing documents
-        global vector_store, retriever, rag_graph
-        if vector_store is None:
-            vector_store = VectorStore()
-            retriever = ContextRetriever(vector_store)
-            rag_graph = None  # Will be recreated after adding documents
-        else:
-            # Clear existing documents to avoid mixing old and new content
-            try:
-                logger.info("Clearing old documents from vector store...")
-                # Try to delete and recreate collection to fix any HNSW index issues
-                try:
-                    vector_store.delete_collection()
-                    logger.info("Deleted old collection to fix potential HNSW issues")
-                    # Reinitialize vector store - CRITICAL: This creates a new collection with new UUID
-                    vector_store = VectorStore()
-                    retriever = ContextRetriever(vector_store)
-                    # CRITICAL: Reset rag_graph so it uses the new retriever with new collection
-                    rag_graph = None
-                    logger.info("Reinitialized vector store and reset RAG graph")
-                except Exception as delete_error:
-                    logger.warning(f"Could not delete collection: {delete_error}, trying clear_all_documents...")
-                    vector_store.clear_all_documents()
-                    # Still reset rag_graph to ensure it uses current vector store
-                    rag_graph = None
-                logger.info("Old documents cleared successfully")
-            except Exception as clear_error:
-                logger.warning(f"Could not clear old documents (this is OK if vector store is empty): {clear_error}")
-                # Try to recreate vector store
-                try:
-                    vector_store = VectorStore()
-                    retriever = ContextRetriever(vector_store)
-                    rag_graph = None  # Reset to ensure fresh graph
-                except Exception as recreate_error:
-                    logger.error(f"Failed to recreate vector store: {recreate_error}")
+        chunks_processed = result.get("chunks_processed", 0)
+        documents_indexed = result.get("documents_indexed", 0)
         
-        # Add new documents to vector store
-        logger.info(f"Starting to add {len(chunks)} chunks to vector store (this may take several minutes for large files)...")
-        doc_ids = vector_store.add_documents(chunks)
+        logger.info(f"✅ PDF processed: {total_pages} pages, "
+                   f"{chunks_processed} chunks, {documents_indexed} indexed")
         
-        # Verify documents were added successfully
-        if not doc_ids or len(doc_ids) == 0:
-            raise HTTPException(status_code=500, detail="Failed to add documents to vector store. No documents were indexed.")
-        
-        logger.info(f"Successfully indexed {len(doc_ids)} document chunks")
-        
-        # CRITICAL: Always recreate RAG graph after adding documents to ensure it uses the current retriever
-        # This ensures the graph uses the correct collection UUID
-        logger.info("Reinitializing RAG graph with updated retriever...")
-        rag_graph = RAGGraph(retriever)
-        logger.info("RAG graph reinitialized successfully")
-        
-        # Clean up temp file
-        os.remove(temp_path)
-        
-        return JSONResponse(content={
-            "message": "PDF uploaded and processed successfully",
-            "pages": pdf_data["total_pages"],
-            "chunks": len(chunks),
-            "document_ids": len(doc_ids)
-        })
-        
-    except ValueError as e:
+        # Clean up
         if os.path.exists(temp_path):
             os.remove(temp_path)
-        raise HTTPException(status_code=400, detail=str(e))
+        
+        return UploadResponse(
+            message="PDF uploaded and processed successfully",
+            pages=total_pages,
+            chunks=chunks_processed,
+            document_ids=documents_indexed
+        )
+    
+    except HTTPException:
+        raise
     except Exception as e:
+        logger.error(f"Error processing PDF: {e}", exc_info=True)
         if os.path.exists(temp_path):
             os.remove(temp_path)
-        logger.error(f"Error processing PDF: {e}")
         raise HTTPException(status_code=500, detail=f"Error processing PDF: {str(e)}")
 
 
@@ -305,118 +263,610 @@ async def chat(request: ChatRequest):
     Chat with the PDF using RAG.
     
     Args:
-        request: Chat request with question and optional conversation_id
+        request: Chat request with question
         
     Returns:
-        Chat response with answer, optional visualization, and conversation_id
+        Chat response with answer and optional visualizations
     """
-    global rag_graph, conversation_storage, retriever, vector_store
-    
     if not request.question or not request.question.strip():
         raise HTTPException(status_code=400, detail="Question cannot be empty")
     
-    # CRITICAL: Ensure components are properly initialized and synchronized
-    if vector_store is None:
-        raise HTTPException(status_code=503, detail="Vector store not initialized. Please upload a PDF first.")
-    
-    # Ensure retriever uses the current vector_store instance
-    if retriever is None or retriever.vector_store is not vector_store:
-        logger.info("Reinitializing retriever to match current vector store...")
-        retriever = ContextRetriever(vector_store)
-    
-    # Ensure rag_graph uses the current retriever instance
-    if rag_graph is None or rag_graph.retriever is not retriever:
-        logger.info("Reinitializing RAG graph to match current retriever...")
-        rag_graph = RAGGraph(retriever)
-    
     try:
-        # Ensure components are loaded
-        ensure_components_loaded()
+        # Get RAG system
+        rag_system = get_rag_system()
         
-        # Get or create conversation
-        conversation_id = request.conversation_id
-        if not conversation_id:
-            conversation = conversation_storage.create_conversation()
-            conversation_id = conversation["id"]
-        
-        logger.info(f"Chat request received for conversation {conversation_id}: {request.question[:100]}...")
-        
-        # Store user message
-        conversation_storage.add_message(
-            conversation_id=conversation_id,
-            role="user",
-            content=request.question
+        # Process question
+        result = rag_system.answer_question(
+            question=request.question,
+            use_memory=True
         )
         
-        # Invoke RAG graph
-        result = rag_graph.invoke(request.question)
+        if not result.get("success"):
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to process question: {result.get('error')}"
+            )
         
-        logger.info(f"Graph returned result. Keys: {list(result.keys()) if isinstance(result, dict) else 'Not a dict'}")
-        answer = result.get("answer", "")
-        visualization = result.get("visualization")
+        response = result.get("response", {})
         
-        logger.info(f"Extracted answer length: {len(answer)} characters")
-        logger.info(f"Answer preview: {answer[:200] if answer else 'EMPTY'}...")
-        logger.info(f"Visualization present: {visualization is not None}")
+        logger.info(f"✅ Chat response generated: {response.get('answer')[:100]}...")
+        logger.info(f"📊 Chart data: {response.get('chart')}")
+        logger.info(f"📋 Table data: {response.get('table')}")
+        logger.info(f"📈 Visualization data: {response.get('visualization')}")
         
-        # DEBUG: Log visualization details
-        if visualization:
-            logger.info(f"Visualization type: {type(visualization)}")
-            if isinstance(visualization, dict):
-                logger.info(f"Visualization keys: {list(visualization.keys())}")
-                logger.info(f"Chart type: {visualization.get('chart_type')}")
-                logger.info(f"Has headers: {bool(visualization.get('headers'))}")
-                logger.info(f"Has rows: {bool(visualization.get('rows'))}")
-                if visualization.get('headers'):
-                    logger.info(f"Headers: {visualization.get('headers')[:5]}")
-                if visualization.get('rows'):
-                    logger.info(f"Rows count: {len(visualization.get('rows'))}")
+        # ============================================================
+        # GLOBAL CHART INTENT DETECTION - MUST BE FIRST
+        # ============================================================
+        question_lower = request.question.lower()
+        is_chart_request = any(kw in question_lower for kw in [
+            'chart', 'charts', 'graph', 'graphs', 'visualize', 'visualization', 'visualizations',
+            'visualise', 'show chart', 'display chart', 'give me chart', 'give me charts',
+            'generate chart', 'create chart', 'plot', 'plotting', 'show charts'
+        ])
+        
+        logger.info(f"🎯 GLOBAL CHART INTENT DETECTION: is_chart_request = {is_chart_request}")
+        
+        # ============================================================
+        # IMMEDIATE ERROR CHECK - Before any other processing
+        # ============================================================
+        # Check if visualization already has an error from RAG system
+        raw_viz = response.get("visualization")
+        if raw_viz and isinstance(raw_viz, dict) and "error" in raw_viz:
+            error_msg = raw_viz.get("error", "No structured numerical data available to generate a chart.")
+            logger.error(f"❌ IMMEDIATE ERROR CHECK: visualization has error: {error_msg}")
+            return ChatResponse(
+                answer=error_msg,
+                chart=None,
+                visualization=None,
+                table=None,
+                chat_history=response.get("chat_history"),
+                conversation_id=request.conversation_id
+            )
+        
+        # ============================================================
+        # IMMEDIATE TABLE BLOCK - If chart requested and visualization is table
+        # ============================================================
+        if is_chart_request and raw_viz and isinstance(raw_viz, dict):
+            viz_type = raw_viz.get("chart_type") or raw_viz.get("type")
+            has_headers_rows = raw_viz.get("headers") and raw_viz.get("rows")
+            
+            if viz_type == "table" or (has_headers_rows and not raw_viz.get("labels")):
+                logger.error(f"❌ IMMEDIATE TABLE BLOCK: Chart requested but visualization is table - BLOCKED")
+                return ChatResponse(
+                    answer="No structured numerical data available to generate a chart.",
+                    chart=None,
+                    visualization=None,
+                    table=None,
+                    chat_history=response.get("chat_history"),
+                    conversation_id=request.conversation_id
+                )
+        
+        # CRITICAL: If chart requested but no chart/table, try to extract and CONVERT to chart
+        if not response.get("chart") and not response.get("table"):
+            answer_text = response.get("answer", "")
+            if "table" in answer_text.lower() or "trial balance" in answer_text.lower():
+                logger.info("🔍 Detected table mention but no chart data - attempting extraction...")
+                # Try to extract table from context if available
+                try:
+                    # Get the context that was used
+                    context = result.get("response", {}).get("metadata", {}).get("context", "")
+                    if context:
+                        # Look for table patterns in context
+                        import re
+                        # Pattern for table with Account | Debit | Credit
+                        table_pattern = r'(Account|Item|Description)[\s\|]*(Debit|Credit|Amount|Value)'
+                        if re.search(table_pattern, context, re.IGNORECASE):
+                            logger.info("✅ Found table pattern in context - extracting...")
+                            # Extract table data from context
+                            lines = context.split('\n')
+                            headers = []
+                            rows = []
+                            in_table = False
+                            
+                            for line in lines:
+                                # Look for header row
+                                if 'Account' in line and ('Debit' in line or 'Credit' in line):
+                                    # Extract headers
+                                    parts = re.split(r'\s{2,}|\t|\|', line.strip())
+                                    headers = [p.strip() for p in parts if p.strip()]
+                                    in_table = True
+                                    continue
+                                
+                                if in_table and headers:
+                                    # Extract data rows
+                                    parts = re.split(r'\s{2,}|\t|\|', line.strip())
+                                    if len(parts) >= len(headers):
+                                        row = [p.strip() for p in parts[:len(headers)]]
+                                        if any(cell and cell != '-' for cell in row):
+                                            rows.append(row)
+                            
+                            if headers and rows:
+                                logger.info(f"✅ Extracted table: {len(headers)} columns, {len(rows)} rows")
+                                
+                                # ============================================================
+                                # CRITICAL: IF CHART REQUESTED, CONVERT TABLE TO CHART
+                                # ============================================================
+                                if is_chart_request:
+                                    logger.info("🔄 CHART REQUESTED - Converting table to chart...")
+                                    # Extract account names and values for chart
+                                    labels = []
+                                    values = []
+                                    
+                                    # Find which columns are account names and which are numeric
+                                    account_col = 0
+                                    value_col = 1  # Default to first numeric column
+                                    
+                                    # Try to find Debit or Credit column
+                                    for idx, header in enumerate(headers):
+                                        header_lower = header.lower()
+                                        if 'debit' in header_lower or 'credit' in header_lower or 'amount' in header_lower or 'value' in header_lower:
+                                            value_col = idx
+                                            break
+                                    
+                                    for row in rows:
+                                        if len(row) > max(account_col, value_col):
+                                            account_name = str(row[account_col]).strip()
+                                            # Skip totals and empty rows
+                                            if account_name.lower() in ['total', 'sum', '-', ''] or 'total' in account_name.lower():
+                                                continue
+                                            
+                                            # Extract numeric value
+                                            value_str = str(row[value_col]).replace(',', '').replace('$', '').replace('₹', '').strip()
+                                            try:
+                                                value = float(re.sub(r'[^\d.]', '', value_str)) if value_str and value_str != '-' else 0
+                                            except:
+                                                value = 0
+                                            
+                                            if account_name and value > 0:
+                                                labels.append(account_name)
+                                                values.append(value)
+                                    
+                                    if len(labels) >= 2 and len(values) >= 2:
+                                        logger.info(f"✅ CONVERTED TO CHART: {len(labels)} data points")
+                                        response["chart"] = {
+                                            "type": "bar",
+                                            "labels": labels,
+                                            "values": values,
+                                            "title": "Trial Balance",
+                                            "xAxis": "Account",
+                                            "yAxis": "Amount"
+                                        }
+                                    else:
+                                        logger.warning(f"⚠️ Not enough data for chart: {len(labels)} labels, {len(values)} values")
+                                        # Don't create table - return error instead
+                                        response["chart"] = None
+                                else:
+                                    # NOT a chart request - OK to create table
+                                    response["chart"] = {
+                                        "type": "table",
+                                        "headers": headers,
+                                        "rows": rows,
+                                        "title": "Trial Balance"
+                                    }
+                except Exception as extract_error:
+                    logger.warning(f"Table extraction failed: {extract_error}")
+        
+        # Get conversation storage for storing message
+        conv_storage = get_conversation_storage()
+        
+        # Store message if conversation_id provided
+        if request.conversation_id:
+            try:
+                conv_storage.add_message(
+                    conversation_id=request.conversation_id,
+                    role="user",
+                    content=request.question
+                )
+                conv_storage.add_message(
+                    conversation_id=request.conversation_id,
+                    role="assistant",
+                    content=response.get("answer", "")
+                )
+            except Exception as e:
+                logger.warning(f"Could not store conversation message: {e}")
+        
+        # CRITICAL: Check if visualization pipeline returned an error
+        viz_result = result.get("response", {}).get("metadata", {}).get("viz_result")
+        if viz_result and isinstance(viz_result, dict) and "error" in viz_result:
+            error_msg = viz_result.get("error", "No structured financial data available to generate a chart.")
+            logger.error(f"❌ Visualization error: {error_msg}")
+            return ChatResponse(
+                answer=error_msg,
+                chart=None,
+                visualization=None,
+                table=None,
+                chat_history=response.get("chat_history"),
+                conversation_id=request.conversation_id
+            )
+        
+        # Map chart to visualization for frontend compatibility
+        chart_data = response.get("chart")
+        visualization = None
+        
+        # CRITICAL: Check if visualization field already exists (from graph.py or other sources)
+        if response.get("visualization"):
+            viz_data = response.get("visualization")
+            # Filter out error objects
+            if isinstance(viz_data, dict) and "error" in viz_data:
+                error_msg = viz_data.get("error", "No structured financial data available to generate a chart.")
+                logger.error(f"❌ Visualization error: {error_msg}")
+                return ChatResponse(
+                    answer=error_msg,
+                    chart=None,
+                    visualization=None,
+                    table=None,
+                    chat_history=response.get("chat_history"),
+                    conversation_id=request.conversation_id
+                )
+            # ============================================================
+            # CRITICAL EARLY BLOCK: If chart requested and viz_data is table, BLOCK NOW
+            # ============================================================
+            elif is_chart_request and isinstance(viz_data, dict):
+                viz_chart_type = viz_data.get("chart_type") or viz_data.get("type")
+                if viz_chart_type == "table":
+                    logger.error(f"❌ EARLY BLOCK: response.visualization is table when chart requested - BLOCKED")
+                    return ChatResponse(
+                        answer="No structured numerical data available to generate a chart.",
+                        chart=None,
+                        visualization=None,
+                        table=None,
+                        chat_history=response.get("chat_history"),
+                        conversation_id=request.conversation_id
+                    )
+                # Check for headers/rows without labels/values (hidden table)
+                elif viz_data.get("headers") and viz_data.get("rows") and not viz_data.get("labels"):
+                    logger.error(f"❌ EARLY BLOCK: response.visualization has headers/rows but no labels - BLOCKED")
+                    return ChatResponse(
+                        answer="No structured numerical data available to generate a chart.",
+                        chart=None,
+                        visualization=None,
+                        table=None,
+                        chat_history=response.get("chat_history"),
+                        conversation_id=request.conversation_id
+                    )
+                else:
+                    # Normalize table if it's a table
+                    if viz_data.get("chart_type") == "table" or viz_data.get("type") == "table":
+                        from app.rag.table_normalizer import TableNormalizer
+                        viz_data = TableNormalizer.normalize_table_data(viz_data)
+                    visualization = viz_data
+            else:
+                visualization = viz_data
+        
+        # If no visualization from response, try to build from chart
+        if not visualization and chart_data:
+            # CRITICAL: Filter out error objects in chart_data too
+            if isinstance(chart_data, dict) and "error" in chart_data:
+                error_msg = chart_data.get("error", "No structured financial data available to generate a chart.")
+                logger.error(f"❌ Chart error: {error_msg}")
+                return ChatResponse(
+                    answer=error_msg,
+                    chart=None,
+                    visualization=None,
+                    table=None,
+                    chat_history=response.get("chat_history"),
+                    conversation_id=request.conversation_id
+                )
+            elif chart_data and chart_data.get("type") == "table":
+                # CRITICAL: NEVER return table when chart requested (use global is_chart_request)
+                if is_chart_request:
+                    logger.error("❌ CRITICAL: Table returned when chart requested - BLOCKED")
+                    return ChatResponse(
+                        answer="No structured financial data available to generate a chart.",
+                        chart=None,
+                        visualization=None,
+                        table=None,
+                        chat_history=response.get("chat_history"),
+                        conversation_id=request.conversation_id
+                    )
+                # Normalize table structure before returning
+                from app.rag.table_normalizer import TableNormalizer
+                normalized_table = TableNormalizer.normalize_table(
+                    chart_data.get("headers", []),
+                    chart_data.get("rows", []),
+                    chart_data.get("title")
+                )
+                # Only return table if NOT a chart request
+                visualization = {
+                    "chart_type": "table",
+                    "type": "table",
+                    "headers": normalized_table["headers"],
+                    "rows": normalized_table["rows"],
+                    "title": normalized_table["title"],
+                    "markdown": response.get("table")
+                }
+            elif chart_data and chart_data.get("labels") and chart_data.get("values"):
+                # Valid chart data
+                visualization = {
+                    "chart_type": chart_data.get("type", "bar"),
+                    "type": chart_data.get("type", "bar"),
+                    "title": chart_data.get("title", ""),
+                    "labels": chart_data.get("labels", []),
+                    "values": chart_data.get("values", []),
+                    "xAxis": chart_data.get("xAxis"),
+                    "yAxis": chart_data.get("yAxis")
+                }
+        
+        # CRITICAL: Use global is_chart_request (already defined at top)
+        # Chart intent already detected above - no need to redefine
+        
+        if is_chart_request and not visualization:
+            logger.error("❌ Chart requested but no visualization generated")
+            return ChatResponse(
+                answer="No structured financial data available to generate a chart.",
+                chart=None,
+                visualization=None,
+                table=None,
+                chat_history=response.get("chat_history"),
+                conversation_id=request.conversation_id
+            )
+        
+        # CRITICAL: Final check - if chart requested, ensure visualization is NOT a table
+        if is_chart_request and visualization:
+            if visualization.get("chart_type") == "table" or visualization.get("type") == "table":
+                logger.error("❌ CRITICAL: Visualization is table when chart requested - BLOCKED")
+                return ChatResponse(
+                    answer="No structured financial data available to generate a chart.",
+                    chart=None,
+                    visualization=None,
+                    table=None,
+                    chat_history=response.get("chat_history"),
+                    conversation_id=request.conversation_id
+                )
+        
+        # ============================================================
+        # FINAL API RESPONSE GUARD - ABSOLUTE BLOCK ON TABLES
+        # ============================================================
+        # This is the LAST check before returning response
+        # NO EXCEPTIONS - NO TABLES when chart requested
+        # ENTERPRISE SCOPE: Applies to ALL financial documents
+        if is_chart_request:
+            logger.info(f"🔒 FINAL GUARD: Chart requested detected - enforcing strict contract")
+            
+            # Check if visualization is a table in ANY form
+            is_table_visualization = False
+            table_reason = None
+            
+            if visualization:
+                # Check 1: chart_type = "table"
+                if visualization.get("chart_type") == "table":
+                    is_table_visualization = True
+                    table_reason = "chart_type = 'table'"
+                    logger.error(f"❌ FINAL GUARD: {table_reason} - BLOCKED")
+                
+                # Check 2: type = "table"
+                if visualization.get("type") == "table":
+                    is_table_visualization = True
+                    table_reason = "type = 'table'"
+                    logger.error(f"❌ FINAL GUARD: {table_reason} - BLOCKED")
+                
+                # Check 3: markdown tables (ANY markdown with table syntax)
+                if visualization.get("markdown"):
+                    markdown_str = str(visualization.get("markdown"))
+                    if "|" in markdown_str and ("---" in markdown_str or len(markdown_str.split("\n")) > 2):
+                        is_table_visualization = True
+                        table_reason = "markdown table detected"
+                        logger.error(f"❌ FINAL GUARD: {table_reason} - BLOCKED")
+                
+                # Check 4: headers/rows structure (ALWAYS block when chart requested)
+                # CRITICAL: Block headers/rows even if not explicitly marked as table type
+                if visualization.get("headers") and visualization.get("rows"):
+                    # If it has headers/rows but NO valid chart data, it's a table
+                    if not visualization.get("labels") or not visualization.get("values"):
+                        is_table_visualization = True
+                        table_reason = "headers/rows structure without chart data"
+                        logger.error(f"❌ FINAL GUARD: {table_reason} - BLOCKED")
+                    # Also block if explicitly marked as table
+                    elif visualization.get("chart_type") == "table" or visualization.get("type") == "table":
+                        is_table_visualization = True
+                        table_reason = "headers/rows with table type"
+                        logger.error(f"❌ FINAL GUARD: {table_reason} - BLOCKED")
+            
+            # If table detected, DISCARD visualization completely
+            if is_table_visualization:
+                logger.error(f"❌ FINAL GUARD: DISCARDING table visualization (reason: {table_reason}) - returning error")
+                return ChatResponse(
+                    answer="No structured numerical data available to generate a chart.",
+                    chart=None,
+                    visualization=None,
+                    table=None,
+                    chat_history=response.get("chat_history"),
+                    conversation_id=request.conversation_id
+                )
+            
+            # Final validation: Ensure visualization is a valid chart type
+            if visualization:
+                valid_chart_types = ["bar", "line", "pie", "stacked_bar"]
+                chart_type = visualization.get("chart_type") or visualization.get("type")
+                
+                if not chart_type or chart_type not in valid_chart_types:
+                    logger.error(f"❌ FINAL GUARD: Invalid or missing chart_type '{chart_type}' - must be one of {valid_chart_types}")
+                    return ChatResponse(
+                        answer="No structured numerical data available to generate a chart.",
+                        chart=None,
+                        visualization=None,
+                        table=None,
+                        chat_history=response.get("chat_history"),
+                        conversation_id=request.conversation_id
+                    )
+                
+                # Ensure chart has required fields (labels and values)
+                labels = visualization.get("labels")
+                values = visualization.get("values")
+                
+                if not labels or not isinstance(labels, list) or len(labels) < 2:
+                    logger.error(f"❌ FINAL GUARD: Chart missing or invalid labels: {labels}")
+                    return ChatResponse(
+                        answer="No structured numerical data available to generate a chart.",
+                        chart=None,
+                        visualization=None,
+                        table=None,
+                        chat_history=response.get("chat_history"),
+                        conversation_id=request.conversation_id
+                    )
+                
+                if not values or not isinstance(values, list) or len(values) < 2:
+                    logger.error(f"❌ FINAL GUARD: Chart missing or invalid values: {values}")
+                    return ChatResponse(
+                        answer="No structured numerical data available to generate a chart.",
+                        chart=None,
+                        visualization=None,
+                        table=None,
+                        chat_history=response.get("chat_history"),
+                        conversation_id=request.conversation_id
+                    )
+                
+                if len(labels) != len(values):
+                    logger.error(f"❌ FINAL GUARD: Labels/values length mismatch: {len(labels)} vs {len(values)}")
+                    return ChatResponse(
+                        answer="No structured numerical data available to generate a chart.",
+                        chart=None,
+                        visualization=None,
+                        table=None,
+                        chat_history=response.get("chat_history"),
+                        conversation_id=request.conversation_id
+                    )
+                
+                logger.info(f"✅ FINAL GUARD: Valid chart confirmed - type: {chart_type}, labels: {len(labels)}, values: {len(values)}")
+            else:
+                # No visualization at all when chart requested
+                logger.error("❌ FINAL GUARD: Chart requested but no visualization provided")
+                return ChatResponse(
+                    answer="No structured numerical data available to generate a chart.",
+                    chart=None,
+                    visualization=None,
+                    table=None,
+                    chat_history=response.get("chat_history"),
+                    conversation_id=request.conversation_id
+                )
+        
+        # ============================================================
+        # FINAL SANITIZATION - ABSOLUTE LAST CHECK BEFORE RETURN
+        # ============================================================
+        # This is the FINAL boundary - no table can pass through
+        final_chart_data = None
+        final_visualization = visualization
+        final_table = None
+        
+        if is_chart_request:
+            # CRITICAL: Remove ANY table data from chart_data
+            if chart_data:
+                if chart_data.get("type") == "table" or chart_data.get("chart_type") == "table":
+                    logger.error("❌ FINAL SANITIZATION: Discarding table chart_data")
+                    final_chart_data = None
+                elif "error" not in chart_data:
+                    final_chart_data = chart_data
+            
+            # CRITICAL: Final check on visualization (should have passed guard above, but double-check)
+            if final_visualization:
+                if (final_visualization.get("chart_type") == "table" or 
+                    final_visualization.get("type") == "table" or
+                    (final_visualization.get("headers") and final_visualization.get("rows") and 
+                     not final_visualization.get("labels") and not final_visualization.get("values"))):
+                    logger.error("❌ FINAL SANITIZATION: Discarding table visualization (should not reach here)")
+                    final_visualization = None
+                    # If we reach here, something went wrong - return error
+                    return ChatResponse(
+                        answer="No structured numerical data available to generate a chart.",
+                        chart=None,
+                        visualization=None,
+                        table=None,
+                        chat_history=response.get("chat_history"),
+                        conversation_id=request.conversation_id
+                    )
+            
+            # NEVER return table when chart requested
+            final_table = None
         else:
-            logger.warning("⚠️ No visualization object in response!")
+            # Not a chart request - allow table
+            if chart_data and "error" not in chart_data:
+                if chart_data.get("type") != "table" and chart_data.get("chart_type") != "table":
+                    final_chart_data = chart_data
+            final_table = response.get("table")
         
-        if not answer or not answer.strip():
-            logger.error("Answer is empty in API response!")
-            answer = "I couldn't generate an answer. Please try rephrasing your question or ensure the document was uploaded correctly."
+        # ============================================================
+        # FINAL RESPONSE - ABSOLUTE BOUNDARY
+        # ============================================================
+        logger.info(f"📤 FINAL RESPONSE: chart_requested={is_chart_request}, has_visualization={bool(final_visualization)}, has_chart={bool(final_chart_data)}")
         
-        # Store assistant message
-        conversation_storage.add_message(
-            conversation_id=conversation_id,
-            role="assistant",
-            content=answer,
-            visualization=visualization
-        )
+        # CRITICAL: Fix answer if we have a valid chart or table but answer says "Not available"
+        final_answer = response.get("answer", "")
+        question_lower = request.question.lower()
+        is_table_request = ("table" in question_lower or "tabular" in question_lower) and not is_chart_request
+        
+        if final_visualization and isinstance(final_visualization, dict):
+            # Check if it's a table (has headers/rows, no labels/values, or chart_type is "table")
+            viz_type = final_visualization.get("chart_type") or final_visualization.get("type")
+            has_table_structure = (final_visualization.get("headers") and final_visualization.get("rows") and 
+                                  not final_visualization.get("labels") and not final_visualization.get("values"))
+            is_table_type = viz_type == "table"
+            has_table = has_table_structure or is_table_type
+            
+            # Check if it's a chart (has labels/values)
+            has_chart = final_visualization.get("labels") and final_visualization.get("values")
+            
+            # PRIORITY: Check table first (more specific)
+            if has_table:
+                # We have a table - ALWAYS replace "Not available" message
+                if "not available" in final_answer.lower() or final_answer.strip() == "" or not final_answer:
+                    final_answer = "The requested table is shown below."
+                    logger.info("📤 Fixed answer: replaced 'Not available' with table message")
+            elif has_chart:
+                # We have a chart - use chart message
+                if "not available" in final_answer.lower() or final_answer.strip() == "" or not final_answer:
+                    final_answer = "Here is the visualization based on the document data."
+                    logger.info("📤 Fixed answer: replaced 'Not available' with chart description")
         
         return ChatResponse(
-            answer=answer,
-            visualization=visualization,
-            conversation_id=conversation_id
+            answer=final_answer,
+            chart=final_chart_data,
+            visualization=final_visualization,
+            table=final_table,  # Always None if chart requested
+            chat_history=response.get("chat_history"),
+            conversation_id=request.conversation_id
         )
-        
+    
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Error in chat endpoint: {e}", exc_info=True)
+        logger.error(f"Error processing chat: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Error processing question: {str(e)}")
+
+
+@app.delete("/clear_memory", response_model=ClearMemoryResponse)
+async def clear_memory_endpoint():
+    """
+    Clear conversation memory.
+    
+    Returns:
+        Clear memory response
+    """
+    try:
+        clear_memory()
+        logger.info("✅ Conversation memory cleared")
+        
+        return ClearMemoryResponse(
+            message="Conversation memory cleared successfully",
+            success=True
+        )
+    except Exception as e:
+        logger.error(f"Error clearing memory: {e}")
+        raise HTTPException(status_code=500, detail=f"Error clearing memory: {str(e)}")
 
 
 @app.delete("/remove_file")
 async def remove_file():
     """
-    Remove the uploaded file and clear the vector store.
+    Remove uploaded document and reset vector store.
     
     Returns:
         Success message
     """
-    global vector_store, retriever, rag_graph
-    
     try:
-        if vector_store is not None:
-            logger.info("Clearing all documents from vector store...")
-            vector_store.clear_all_documents()
-            logger.info("All documents cleared successfully")
+        rag_system = get_rag_system()
+        rag_system.reset()
         
-        # Reset components
-        vector_store = None
-        retriever = None
-        rag_graph = None
+        logger.info("✅ Document removed and system reset")
         
         return JSONResponse(content={
             "message": "File removed successfully",
@@ -427,13 +877,39 @@ async def remove_file():
         raise HTTPException(status_code=500, detail=f"Error removing file: {str(e)}")
 
 
+@app.get("/status", response_model=StatusResponse)
+async def get_status():
+    """
+    Get system status.
+    
+    Returns:
+        System status information
+    """
+    try:
+        rag_system = get_rag_system()
+        status = rag_system.get_status()
+        
+        return StatusResponse(
+            initialized=status.get("initialized", False),
+            vector_store_ready=status.get("vector_store_ready", False),
+            memory_messages=status.get("memory_messages", 0),
+            config=status.get("config", {})
+        )
+    except Exception as e:
+        logger.error(f"Error getting status: {e}")
+        raise HTTPException(status_code=500, detail=f"Error getting status: {str(e)}")
+
+
 @app.get("/health")
 async def health_check():
     """Health check endpoint."""
-    return {"status": "healthy", "vector_store_initialized": vector_store is not None}
+    return {
+        "status": "healthy",
+        "version": "2.0.0"
+    }
 
 
-# Conversation endpoints
+# Conversation endpoints (preserved for backward compatibility)
 @app.post("/conversations", response_model=ConversationResponse)
 async def create_conversation(request: CreateConversationRequest = CreateConversationRequest()):
     """
@@ -445,30 +921,45 @@ async def create_conversation(request: CreateConversationRequest = CreateConvers
     Returns:
         Created conversation details
     """
-    ensure_components_loaded()
     try:
-        conversation = conversation_storage.create_conversation(title=request.title)
-        return ConversationResponse(**conversation)
+        conv_storage = get_conversation_storage()
+        conversation = conv_storage.create_conversation(title=request.title)
+        
+        return ConversationResponse(
+            id=conversation["id"],
+            title=conversation["title"],
+            created_at=conversation["created_at"],
+            updated_at=conversation["updated_at"],
+            message_count=0
+        )
     except Exception as e:
         logger.error(f"Error creating conversation: {e}")
         raise HTTPException(status_code=500, detail=f"Error creating conversation: {str(e)}")
 
 
 @app.get("/conversations")
-async def list_conversations(limit: int = 50):
+async def list_conversations():
     """
     List all conversations.
     
-    Args:
-        limit: Maximum number of conversations to return
-        
     Returns:
         List of conversations
     """
-    ensure_components_loaded()
     try:
-        conversations = conversation_storage.list_conversations(limit=limit)
-        return {"conversations": conversations}
+        conv_storage = get_conversation_storage()
+        conversations = conv_storage.list_conversations()
+        
+        return {
+            "conversations": [
+                ConversationResponse(
+                    id=c["id"],
+                    title=c["title"],
+                    created_at=c["created_at"],
+                    updated_at=c["updated_at"],
+                    message_count=c.get("message_count", 0)
+                ).model_dump() for c in conversations
+            ]
+        }
     except Exception as e:
         logger.error(f"Error listing conversations: {e}")
         raise HTTPException(status_code=500, detail=f"Error listing conversations: {str(e)}")
@@ -477,19 +968,21 @@ async def list_conversations(limit: int = 50):
 @app.get("/conversations/{conversation_id}")
 async def get_conversation(conversation_id: str):
     """
-    Get a conversation with its messages.
+    Get conversation details.
     
     Args:
         conversation_id: Conversation ID
         
     Returns:
-        Conversation with messages
+        Conversation details with messages
     """
-    ensure_components_loaded()
     try:
-        conversation = conversation_storage.get_conversation(conversation_id)
+        conv_storage = get_conversation_storage()
+        conversation = conv_storage.get_conversation(conversation_id)
+        
         if not conversation:
             raise HTTPException(status_code=404, detail="Conversation not found")
+        
         return conversation
     except HTTPException:
         raise
@@ -509,11 +1002,13 @@ async def delete_conversation(conversation_id: str):
     Returns:
         Success message
     """
-    ensure_components_loaded()
     try:
-        deleted = conversation_storage.delete_conversation(conversation_id)
+        conv_storage = get_conversation_storage()
+        deleted = conv_storage.delete_conversation(conversation_id)
+        
         if not deleted:
             raise HTTPException(status_code=404, detail="Conversation not found")
+        
         return {"message": "Conversation deleted successfully", "success": True}
     except HTTPException:
         raise
@@ -526,12 +1021,14 @@ async def delete_conversation(conversation_id: str):
 async def root():
     """Root endpoint with API information."""
     return {
-        "message": "PDF Chatbot API",
-        "version": "1.0.0",
+        "message": "Enterprise RAG Chatbot API",
+        "version": "2.0.0",
         "endpoints": {
             "upload": "POST /upload_pdf",
             "chat": "POST /chat",
+            "clear_memory": "DELETE /clear_memory",
             "remove_file": "DELETE /remove_file",
+            "status": "GET /status",
             "health": "GET /health",
             "create_conversation": "POST /conversations",
             "list_conversations": "GET /conversations",
@@ -539,4 +1036,13 @@ async def root():
             "delete_conversation": "DELETE /conversations/{id}"
         }
     }
+    """
+    Upload and process a PDF file.
+    
+    Args:
+        file: PDF file upload
+        
+    Returns:
+        Success message with processing details
+    """
 

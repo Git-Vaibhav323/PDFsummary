@@ -31,7 +31,8 @@ class Settings(BaseSettings):
     
     # OpenAI API Configuration
     openai_api_key: str = Field(..., description="OpenAI API key (required)")
-    openai_model: str = "gpt-4o-mini"  # Fast and cost-effective model (alternatives: gpt-4o, gpt-3.5-turbo)
+    openai_model: str = "gpt-4.1-mini"  # Fast, deterministic reasoning model (FIXED for enterprise)
+    embedding_model_name: str = "text-embedding-3-small"  # Scalable embeddings (FIXED for enterprise)
     
     # Mistral API Configuration (for OCR and preprocessing)
     mistral_api_key: Optional[str] = Field(default=None, description="Mistral API key (optional, required for OCR)")
@@ -66,13 +67,8 @@ class Settings(BaseSettings):
     chroma_persist_directory: str = "./chroma_db"
     chroma_collection_name: str = "pdf_documents"
     
-    # Chunking Configuration
-    chunk_size: int = 1000
-    chunk_overlap: int = 200
-    # Chunk limits for large documents
-    max_chunks_per_document: int = 500  # Increased default limit (was 200)
-    enable_large_document_processing: bool = True  # Allow processing large docs with warnings
-    large_document_threshold_pages: int = 50  # Pages threshold for "large" document
+    # Temperature setting (FIXED at 0 for deterministic output)
+    temperature: float = 0.0  # Deterministic for enterprise reliability
     
     # Retrieval Configuration
     top_k_retrieval: int = 5
@@ -115,12 +111,12 @@ except Exception as e:
     # The app will handle the error gracefully
     class DummySettings:
         openai_api_key = None
-        openai_model = "gpt-4o-mini"
+        openai_model = "gpt-4.1-mini"
+        embedding_model_name = "text-embedding-3-small"
         embedding_model = "all-MiniLM-L6-v2"
         chroma_persist_directory = "./chroma_db"
         chroma_collection_name = "pdf_documents"
-        chunk_size = 1000
-        chunk_overlap = 200
+        temperature = 0.0
         top_k_retrieval = 5
         api_host = "127.0.0.1"
         api_port = 8000

@@ -26,11 +26,21 @@ CRITICAL RULES:
     - DO NOT provide descriptions or summaries
     - DO NOT create tables in your response
     - DO NOT use markdown tables, ASCII art, or any table formatting
+    - DO NOT say "Not available in the uploaded document" if tables exist
     - ONLY say: "The requested table is shown below."
     - The system will automatically extract and display the actual table
 16. NEVER include table syntax (|, ---, +, =, dashed lines, borders) in your response.
 17. NEVER describe what is in a table - the system shows the actual table automatically.
 18. For ANY question containing the word "table" or "tables", respond with ONLY: "The requested table is shown below."
+19. CRITICAL: If tables exist in the context and user asks for tables, NEVER say "Not available" - ALWAYS say "The requested table is shown below."
+20. FINANCIAL DATA HANDLING:
+    - For financial questions (revenue, profit, sales, cost, budget, balance sheet, income statement, cash flow, financial statements, earnings, expenses, assets, liabilities, equity, P&L, profit & loss):
+      * Provide a brief textual summary of the key financial metrics
+      * Mention that a chart/table will be displayed automatically
+      * Do NOT list all numbers - let the visualization show them
+      * Focus on insights, trends, and key findings from the financial data
+    - For financial comparisons or trends, provide a brief analysis - the chart will show the data visually
+    - For financial tables (Balance Sheet, Income Statement, etc.), respond with: "The requested financial table is shown below."
 
 Context from PDF:
 {context}
@@ -67,10 +77,13 @@ RAG_PROMPT = PromptTemplate(
 VISUALIZATION_DETECTION_PROMPT_TEMPLATE = """Analyze the following question and retrieved context to determine if a visualization (chart/graph/table) should be generated.
 
 CRITICAL RULES:
-- ALWAYS respond "YES" if the context contains ANY numerical data (numbers, percentages, counts, measurements, tables)
 - ALWAYS respond "YES" if the question asks to "show", "visualize", "chart", "graph", "compare", "trend", "display", "plot", "table", "tabular", or "list"
+- ALWAYS respond "YES" if the context contains ANY numerical data (numbers, percentages, counts, measurements, tables)
 - ALWAYS respond "YES" if the context has tabular data, lists of numbers, or comparisons
 - ALWAYS respond "YES" if the question explicitly asks for a "table" or "tabular format"
+- ALWAYS respond "YES" for financial data questions (revenue, profit, sales, cost, budget, balance sheet, income statement, cash flow, financial statements, earnings, expenses, assets, liabilities, equity, P&L, profit & loss)
+- ALWAYS respond "YES" if the question mentions financial terms (revenue, profit, sales, cost, budget, balance, income, expense, asset, liability, equity, earnings, margin, ratio, growth, decline, increase, decrease, comparison, trend)
+- ALWAYS respond "YES" if the question asks about financial performance, financial data, financial metrics, or financial analysis
 - Do NOT check if the original document contains a chart - generate a visualization from the data
 - The presence of numerical/tabular data is sufficient to require visualization
 
@@ -118,15 +131,17 @@ CRITICAL FILTERING RULES - ONLY extract data that meets ALL criteria:
    - Each number MUST have a meaningful label (year, category, metric name, financial term)
    - DO NOT extract numbers without labels
    - DO NOT extract page numbers, section numbers, or indexes
+   - For financial data: Accept labels like "Revenue", "Profit", "Sales", "Cost", "Expense", "Asset", "Liability", "Equity", "Balance", "Income", "Earnings", "Margin", "Ratio", "Growth", "Year", "Quarter", "Month", etc.
 
 2. SEMANTIC MEANING REQUIRED:
-   - Valid: Currency (₹, $, revenue, profit, sales, cost), Percentages (%), Quantities (counts, amounts), Time-based values (years, months, quarters)
+   - Valid: Currency (₹, $, revenue, profit, sales, cost, budget, balance, income, expense, asset, liability, equity, earnings, margin), Percentages (%), Quantities (counts, amounts), Time-based values (years, months, quarters), Financial ratios, Growth rates, Comparisons
    - Invalid: Page numbers, Index values, Serial numbers, Isolated numeric sequences, Reference numbers
 
 3. MINIMUM REQUIREMENTS:
    - At least 2 labeled values required
    - Numbers must belong to the same metric/category
    - Must have units or clear semantic meaning
+   - For financial tables: Extract complete table structure with all rows and columns
 
 4. EXCLUDE THESE:
    - Page numbers (e.g., "Page 7", "p. 10")
@@ -136,10 +151,11 @@ CRITICAL FILTERING RULES - ONLY extract data that meets ALL criteria:
    - Index values or table of contents numbers
 
 Extract ONLY:
-1. Financial data (revenue, profit, cost, sales, budget, balance, etc.) - MUST have proper labels
+1. Financial data (revenue, profit, cost, sales, budget, balance, income statement, balance sheet, cash flow, P&L, profit & loss, earnings, expenses, assets, liabilities, equity, financial statements, financial metrics, financial performance) - MUST have proper labels
 2. Statistical data (percentages, ratios, counts with meaning) - MUST have proper labels
 3. Time-series data (years, months, quarters with associated values) - MUST have proper labels
 4. Comparative data (categories with associated metrics) - MUST have proper labels
+5. Financial tables (Balance Sheet, Income Statement, Cash Flow Statement, Financial Summary, P&L Statement) - Extract complete table structure
 
 CRITICAL: 
 - DO NOT extract raw numbers without labels
@@ -153,21 +169,34 @@ CRITICAL:
 CRITICAL RULES:
 - You MUST respond with ONLY valid JSON. No explanations, no markdown, no extra text. Just the JSON object.
 - "chart_type" MUST be one of: "bar", "line", "pie", or "table"
-- **MANDATORY TABLE EXTRACTION**: If the question contains words like "table", "tables", "tabular", "show as table", or asks to "display tables", you MUST:
+
+**CHART vs TABLE DECISION (CRITICAL):**
+- If question contains: "chart", "graph", "visualize", "bar chart", "line chart", "pie chart", "comparison", "trend", "show chart" → Use CHART type ("bar", "line", or "pie")
+  * Extract labels and values arrays
+  * DO NOT use "table" type
+  * Example: "Show me a chart of revenue" → chart_type: "bar" with labels/values
+
+- If question contains: "table", "tabular", "show table", "display table", "tabular format" → Use TABLE type ("table")
+  * Extract headers and rows arrays
+  * DO NOT use chart types
+  * Example: "Show me the balance sheet table" → chart_type: "table" with headers/rows
+
+- **MANDATORY TABLE EXTRACTION**: If the question explicitly asks for "table", "tables", "tabular", "show as table", you MUST:
   * Extract the actual table data from the context
   * Identify table headers (column names)
   * Extract all rows of data from the table
   * Return chart_type: "table" with headers and rows arrays
   * DO NOT return chart data (labels/values) when user asks for tables
-- Use "table" when:
-  * The question explicitly asks for a table, tabular format, or "show as table" (HIGHEST PRIORITY)
-  * The data has multiple columns/categories that are better displayed in rows and columns
-  * The data has more than 2 dimensions (e.g., multiple metrics per category)
-  * The user wants to see exact values rather than visual trends
-- Use "bar" for comparisons and categories (default, but NOT when user asks for tables)
-- Use "line" for time-series data (years, dates, months)
-- Use "pie" for proportions/percentages
-- If data is naturally tabular (multiple columns), prefer "table" over "bar"
+
+- **MANDATORY CHART EXTRACTION**: If the question asks for "chart", "graph", "visualize", "bar chart", "line chart", "pie chart", you MUST:
+  * Extract numerical data with labels
+  * Return chart_type: "bar", "line", or "pie" with labels and values arrays
+  * DO NOT return table format (headers/rows) when user asks for charts
+
+- Chart type selection:
+  * "bar" for comparisons and categories (revenue by year, expenses by category)
+  * "line" for time-series data (revenue trends, growth over time)
+  * "pie" for proportions/percentages (expense distribution, market share)
 
 IMPORTANT LIMITATIONS:
 - Limit "values" array to maximum 20 numbers (if more data exists, select the most important 20)
@@ -236,3 +265,51 @@ SUMMARY_PROMPT = PromptTemplate(
     template=SUMMARY_PROMPT_TEMPLATE
 )
 
+
+# Question Rewriting Prompt - For resolving references using memory
+QUESTION_REWRITE_PROMPT_TEMPLATE = """You are a helpful assistant that rewrites questions to make them standalone by using conversation context.
+
+Your task: Rewrite the question to be standalone and clear, using only the conversation history to resolve pronouns and references.
+
+RULES:
+1. If the current question contains pronouns (it, that, this, these, those) or references (previous, earlier, same), resolve them using the conversation context
+2. Keep the question concise and natural
+3. Do NOT add external knowledge - only use the conversation context
+4. If the context doesn't clarify a reference, keep the original wording
+5. Return ONLY the rewritten question, no explanation
+
+Conversation Context:
+{memory_context}
+
+Current Question: {current_question}
+
+Rewritten Question:"""
+
+QUESTION_REWRITE_PROMPT = PromptTemplate(
+    input_variables=["memory_context", "current_question"],
+    template=QUESTION_REWRITE_PROMPT_TEMPLATE
+)
+
+
+# RAG Answer Generation Prompt - Strict grounding
+RAG_ANSWER_PROMPT_TEMPLATE = """You are a helpful assistant that answers questions STRICTLY based on provided context.
+
+CRITICAL RULES:
+1. Answer ONLY using the information in the provided context
+2. If the answer is not in the context, respond exactly: "Not available in the uploaded document."
+3. Be concise and direct
+4. Cite page numbers when available in the context metadata
+5. Do NOT add external knowledge or assumptions
+6. If asked for specific data (numbers, dates, names), use EXACTLY what appears in the context
+
+Context from Document:
+{context}
+
+Question: {question}
+
+Answer (use ONLY information from the context above):"""
+
+RAG_ANSWER_PROMPT = PromptTemplate(
+    input_variables=["context", "question"],
+    template=RAG_ANSWER_PROMPT_TEMPLATE
+)

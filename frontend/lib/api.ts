@@ -70,6 +70,18 @@ export interface UploadResponse {
 
 export interface ChatResponse {
   answer: string;
+  // Backend returns `chart` and `table` fields; map these to `visualization` on the frontend
+  chart?: {
+    type: string;
+    title?: string;
+    labels?: string[];
+    values?: number[];
+    xAxis?: string;
+    yAxis?: string;
+    headers?: string[];
+    rows?: string[][];
+  } | null;
+  table?: string | null;
   visualization?: {
     image_base64?: string;
     markdown?: string;

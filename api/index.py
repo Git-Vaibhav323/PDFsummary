@@ -12,3 +12,4 @@ from app.main import app
 # Vercel requires a handler function
 handler = app
 
+
