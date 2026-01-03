@@ -261,17 +261,16 @@ def process_pdf(uploaded_file) -> Dict:
             error_msg = str(e)
             logger.error(f"ValueError processing PDF: {error_msg}")
             
-            # Note: With local embeddings, this error should not occur
-            # But keep for backward compatibility
-            if "free tier" in error_msg.lower() or "limit: 0" in error_msg.lower():
+            # Note: Check for embedding API errors
+            if "free tier" in error_msg.lower() or "limit: 0" in error_msg.lower() or "quota" in error_msg.lower():
                 return {
                     "success": False,
-                    "error": f"❌ **Embedding Error**\n\n"
-                            f"Local embeddings should work without API limits. This error is unexpected.\n\n"
+                    "error": f"❌ **OpenAI Embedding API Error**\n\n"
+                            f"The OpenAI API has rate limits or quota restrictions.\n\n"
                             f"**Solutions:**\n"
-                            f"1. 🔄 **Restart the app** and try again\n"
-                            f"2. 📦 **Check if sentence-transformers is installed**: `pip install sentence-transformers`\n"
-                            f"3. 💻 **Check system resources** (memory/disk space)\n\n"
+                            f"1. 💳 **Check your OpenAI account** - Verify you have credits\n"
+                            f"2. ⏱️ **Wait a moment** - Try again after a brief delay\n"
+                            f"3. 🔑 **Verify API key** - Ensure OPENAI_API_KEY is correct in .env\n\n"
                             f"*Error: {error_msg[:300]}*"
                 }
             # Check if it's a quota error
@@ -1080,7 +1079,7 @@ Environment variable OPENAI_API_KEY: {'Set' if os.getenv('OPENAI_API_KEY') else 
             st.caption(f"**Chunk Overlap:** {settings.chunk_overlap}")
             st.caption(f"**Top K Retrieval:** {settings.top_k_retrieval}")
             st.caption(f"**Model:** {settings.openai_model}")
-            st.caption(f"**Embeddings:** Local (sentence-transformers) - Free!")
+            st.caption(f"**Embeddings:** OpenAI (text-embedding-3-small)")
     
     # Main content area
     if not st.session_state.pdf_uploaded:

@@ -1,71 +1,68 @@
 """
-Local embeddings using sentence-transformers (free, no API needed).
+OpenAI embeddings using text-embedding-3-small with batching and caching.
+Optimized for performance with batch processing.
 """
 from typing import List
 import logging
-import os
-from sentence_transformers import SentenceTransformer
+import time
+from langchain_openai import OpenAIEmbeddings
 from app.config.settings import settings
 
 logger = logging.getLogger(__name__)
 
+# Performance constants
+EMBEDDING_MODEL = "text-embedding-3-small"
+EMBEDDING_DIMENSION = 1536
+BATCH_SIZE = 50  # OpenAI recommends 50-100 for optimal throughput
 
-class LocalEmbeddings:
-    """Wrapper for local sentence-transformers embeddings (free, no API needed)."""
+
+class OpenAIEmbeddingsWrapper:
+    """Wrapper for OpenAI embeddings with batching and performance tracking."""
     
     def __init__(self):
-        """Initialize local embeddings using sentence-transformers."""
-        self._model = None
-        self.model_name = getattr(settings, 'embedding_model', 'all-MiniLM-L6-v2')
-            
+        """Initialize OpenAI embeddings."""
+        self._embeddings = None
+        self.model_name = settings.embedding_model_name  # text-embedding-3-small
+        self.batch_size = BATCH_SIZE
+        self._embed_count = 0
+        self._total_embed_time = 0.0
+    
     def _ensure_initialized(self):
-        """Lazy-load the embedding model on first use."""
-        if self._model is not None:
+        """Lazy-load the embeddings on first use."""
+        if self._embeddings is not None:
             return
         
         try:
-            # Use the same cache directory as download_models.py
-            cache_dir = os.path.join(os.getcwd(), '.model_cache')
-            os.makedirs(cache_dir, exist_ok=True)
+            logger.info(f"🚀 Initializing OpenAI embeddings: {self.model_name}")
             
-            # Set environment variables for HuggingFace cache
-            os.environ['SENTENCE_TRANSFORMERS_HOME'] = cache_dir
-            os.environ['TRANSFORMERS_CACHE'] = cache_dir
-            os.environ['HF_HOME'] = cache_dir
-            
-            logger.info(f"Loading local embedding model: {self.model_name}")
-            logger.info(f"Using cache directory: {cache_dir}")
-            
-            # Check if model is already cached
-            if os.path.exists(cache_dir) and any(os.scandir(cache_dir)):
-                logger.info("✅ Found cached model, loading from cache...")
-            else:
-                logger.info("⚠️ Model not found in cache, will download (this may take a moment)...")
-            
-            # Use SentenceTransformer directly (more reliable than LangChain wrapper)
-            self._model = SentenceTransformer(self.model_name, cache_folder=cache_dir)
-            
-            logger.info(f"✅ Model {self.model_name} loaded successfully")
-            logger.info("✅ Using free local embeddings - no API costs!")
-        except ImportError:
-            raise ImportError(
-                "sentence-transformers is not installed. "
-                "Install it with: pip install sentence-transformers"
+            # Initialize OpenAI embeddings
+            self._embeddings = OpenAIEmbeddings(
+                model=self.model_name,
+                api_key=settings.openai_api_key
             )
+            
+            logger.info(f"✅ OpenAI embeddings initialized")
+            logger.info(f"   Model: {self.model_name}")
+            logger.info(f"   Dimension: {EMBEDDING_DIMENSION}")
+            logger.info(f"   Batch size: {self.batch_size}")
+            
         except Exception as e:
-            logger.error(f"Failed to initialize local embeddings: {e}")
+            logger.error(f"❌ Failed to initialize OpenAI embeddings: {e}")
             raise
+    
+    def get_embeddings_model(self):
+        """Get embeddings model for LangChain compatibility."""
+        self._ensure_initialized()
+        return self._embeddings
     
     @property
     def embeddings(self):
         """Get embeddings model for LangChain compatibility."""
-        self._ensure_initialized()
-        return self
-    
+        return self.get_embeddings_model()
     
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
         """
-        Embed a list of documents.
+        Embed a list of documents using batch processing.
         
         Args:
             texts: List of text strings to embed
@@ -79,23 +76,26 @@ class LocalEmbeddings:
         self._ensure_initialized()
         
         try:
-            logger.info(f"Embedding {len(texts)} document chunks...")
+            start_time = time.time()
+            logger.info(f"📊 Embedding {len(texts)} chunks (batch_size={self.batch_size})...")
             
-            # Use SentenceTransformer directly - faster and more reliable
-            # Convert to float32 numpy arrays then to lists for ChromaDB compatibility
-            embeddings = self._model.encode(
-                texts,
-                batch_size=16,  # Smaller batch size for memory efficiency on free tier
-                show_progress_bar=False,
-                convert_to_numpy=True,
-                normalize_embeddings=True
-            )
+            # Process in batches for better performance
+            all_embeddings = []
+            for i in range(0, len(texts), self.batch_size):
+                batch = texts[i:i + self.batch_size]
+                logger.debug(f"   Batch {i//self.batch_size + 1}: embedding {len(batch)} texts...")
+                
+                batch_embeddings = self._embeddings.embed_documents(batch)
+                all_embeddings.extend(batch_embeddings)
             
-            # Convert numpy arrays to lists
-            embeddings_list = embeddings.tolist()
+            elapsed = time.time() - start_time
+            self._embed_count += len(texts)
+            self._total_embed_time += elapsed
             
-            logger.info(f"✅ Successfully embedded {len(texts)} documents")
-            return embeddings_list
+            rate = len(texts) / max(elapsed, 0.01)
+            logger.info(f"✅ Embedded {len(texts)} documents in {elapsed:.2f}s ({rate:.0f} docs/sec)")
+            
+            return all_embeddings
             
         except Exception as e:
             logger.error(f"❌ Error embedding documents: {e}")
@@ -119,26 +119,22 @@ class LocalEmbeddings:
         self._ensure_initialized()
         
         try:
-            logger.debug(f"Embedding query: {text[:50]}...")
+            start_time = time.time()
+            logger.debug(f"🔍 Embedding query: {text[:50]}...")
             
-            # Use SentenceTransformer directly
-            embedding = self._model.encode(
-                text,
-                convert_to_numpy=True,
-                normalize_embeddings=True
-            )
+            # Use OpenAI embeddings API
+            embedding = self._embeddings.embed_query(text)
             
-            # Convert numpy array to list
-            embedding_list = embedding.tolist()
+            elapsed = time.time() - start_time
+            logger.debug(f"✅ Query embedded in {elapsed:.3f}s")
             
-            logger.debug("✅ Query embedded successfully")
-            return embedding_list
+            return embedding
             
         except Exception as e:
             logger.error(f"❌ Error embedding query: {e}")
             raise
     
     def get_embeddings_model(self):
-        """Get the underlying embeddings model for direct use."""
+        """Get the underlying embeddings model for direct use with LangChain."""
         self._ensure_initialized()
-        return self
+        return self._embeddings

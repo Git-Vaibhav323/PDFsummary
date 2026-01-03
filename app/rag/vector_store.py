@@ -9,7 +9,7 @@ import chromadb
 from chromadb.config import Settings as ChromaSettings
 from langchain_community.vectorstores import Chroma
 from app.config.settings import settings
-from app.rag.embeddings import LocalEmbeddings
+from app.rag.embeddings import OpenAIEmbeddingsWrapper
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +26,7 @@ class VectorStore:
         """
         self.collection_name = collection_name or settings.chroma_collection_name
         self.persist_directory = settings.chroma_persist_directory
-        self.embeddings = LocalEmbeddings()
+        self.embeddings = OpenAIEmbeddingsWrapper()
         
         # Ensure persist directory exists
         os.makedirs(self.persist_directory, exist_ok=True)
@@ -55,9 +55,17 @@ class VectorStore:
                     collection = VectorStore._chroma_client.get_collection(name=self.collection_name)
                     collection_count = collection.count()
                     logger.info(f"Found existing collection '{self.collection_name}' with {collection_count} documents")
-                except Exception:
+                    
+                    # If we find the old collection with 219 documents (from old embeddings),
+                    # delete it since OpenAI embeddings are incompatible with sentence-transformers
+                    if collection_count >= 200:  # Likely the old collection
+                        logger.warning(f"Collection has {collection_count} documents (likely old embeddings), deleting...")
+                        VectorStore._chroma_client.delete_collection(name=self.collection_name)
+                        logger.info(f"Old collection deleted, will create fresh one with OpenAI embeddings")
+                        collection_count = 0
+                except Exception as e:
                     collection_count = 0
-                    logger.info(f"Collection '{self.collection_name}' does not exist, will create new one")
+                    logger.info(f"Collection '{self.collection_name}' does not exist, will create new one: {e}")
                 
                 self.vectorstore = Chroma(
                     collection_name=self.collection_name,
@@ -138,15 +146,16 @@ class VectorStore:
                     successful_ids = validated_ids
                 except Exception as e:
                     error_str = str(e)
-                    # With local embeddings, this should not occur, but keep for error handling
-                    if "limit: 0" in error_str or "free_tier" in error_str.lower():
+                    # Check for API limits or quota errors
+                    if "limit: 0" in error_str or "free_tier" in error_str.lower() or "quota" in error_str.lower():
                         raise ValueError(
-                            "❌ **Embedding Error**\n\n"
-                            "Local embeddings should not have API limits. This error is unexpected.\n\n"
+                            "❌ **OpenAI Embedding API Error**\n\n"
+                            "The OpenAI API has rate limits or quota restrictions.\n\n"
                             "**Solutions:**\n"
-                            "1. 🔄 **Restart the app** and try again\n"
-                            "2. 📦 **Check if sentence-transformers is installed**: `pip install sentence-transformers`\n"
-                            "3. 💻 **Check system resources** (memory/disk space)"
+                            "1. 💳 **Check your OpenAI account** - Verify you have credits\n"
+                            "2. ⏱️ **Wait a moment** - Try again after a brief delay\n"
+                            "3. 🔑 **Verify API key** - Ensure OPENAI_API_KEY is correct in .env\n"
+                            "4. 🔄 **Restart the app** and try again"
                         ) from e
                     
                     # If batch fails, try one at a time for small files
@@ -164,17 +173,18 @@ class VectorStore:
                             error_str = str(individual_error)
                             logger.error(f"Failed to add chunk {idx}: {individual_error}")
                             
-                            # With local embeddings, this should not occur
-                            if "limit: 0" in error_str or "free_tier" in error_str.lower():
+                            # Check for API limits or quota errors
+                            if "limit: 0" in error_str or "free_tier" in error_str.lower() or "quota" in error_str.lower():
                                 # If all chunks fail, raise immediately
                                 if failed_count == len(validated_texts):
                                     raise ValueError(
-                                        "❌ **Embedding Error**\n\n"
-                                        "All chunks failed to embed. This should not happen with local embeddings.\n\n"
+                                        "❌ **OpenAI Embedding API Error**\n\n"
+                                        "All chunks failed to embed due to API limits.\n\n"
                                         "**Solutions:**\n"
-                                        "1. 📦 **Check if sentence-transformers is installed**: `pip install sentence-transformers`\n"
-                                        "2. 💻 **Check system resources** (memory/disk space)\n"
-                                        "3. 🔄 **Restart the app** and try again"
+                                        "1. 💳 **Check your OpenAI account** - Verify you have credits\n"
+                                        "2. ⏱️ **Wait a moment** - Try again after a brief delay\n"
+                                        "3. 🔑 **Verify API key** - Ensure OPENAI_API_KEY is correct in .env\n"
+                                        "4. 🔄 **Restart the app** and try again"
                                     ) from individual_error
             else:
                 # For larger batches, use normal flow
@@ -187,10 +197,14 @@ class VectorStore:
                     successful_ids = validated_ids
                 except Exception as e:
                     error_str = str(e)
-                    if "limit: 0" in error_str or "free_tier" in error_str.lower():
+                    if "limit: 0" in error_str or "free_tier" in error_str.lower() or "quota" in error_str.lower():
                         raise ValueError(
-                            "❌ **Embedding Error**\n\n"
-                            "Local embeddings should not have API limits. Please check if sentence-transformers is installed."
+                            "❌ **OpenAI Embedding API Error**\n\n"
+                            "The OpenAI API has rate limits or quota restrictions.\n\n"
+                            "**Solutions:**\n"
+                            "1. 💳 **Check your OpenAI account** - Verify you have credits\n"
+                            "2. ⏱️ **Wait a moment** - Try again after a brief delay\n"
+                            "3. 🔑 **Verify API key** - Ensure OPENAI_API_KEY is correct in .env"
                         ) from e
                     raise
             
@@ -621,6 +635,33 @@ class VectorStore:
             
             # For other errors, return empty list (might be empty vector store)
             return []
+    
+    def similarity_search_with_score(self, query: str, k: int = 4, filter_dict: Optional[Dict] = None) -> tuple:
+        """
+        Search for similar documents and return results with confidence score.
+        
+        Args:
+            query: Search query text
+            k: Number of results to return
+            filter_dict: Optional metadata filters
+            
+        Returns:
+            Tuple of (documents list, confidence score 0-1)
+        """
+        results = self.similarity_search(query, k, filter_dict)
+        
+        if not results:
+            return [], 0.0
+        
+        # Calculate confidence from the score of the top result
+        top_score = results[0].get("score", 0.0) if isinstance(results[0], dict) else 0.0
+        
+        # Convert similarity score (0-1) to confidence (0-1)
+        # Higher similarity = higher confidence
+        confidence = min(1.0, max(0.0, top_score))
+        
+        logger.debug(f"Retrieved {len(results)} results with top confidence: {confidence:.2f}")
+        return results, confidence
     
     def clear_all_documents(self):
         """

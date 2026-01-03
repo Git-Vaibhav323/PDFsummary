@@ -441,7 +441,7 @@ class RAGGraph:
                         **state,
                         "retrieved_context": [],
                         "context_text": "",
-                        "answer": "Error: Cannot retrieve context. This should not happen with local embeddings. Please check if sentence-transformers is installed."
+                        "answer": "Error: Cannot retrieve context. Please check if your OpenAI API key is valid and your embeddings are configured correctly."
                     }
                 # Try fallback even on error
                 try:

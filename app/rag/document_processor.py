@@ -4,13 +4,15 @@ Optimized document ingestion pipeline for high-performance RAG.
 Handles:
 - Asynchronous document processing
 - Text extraction and table extraction
-- Efficient chunking (900-1100 tokens, 100-150 overlap)
+- Efficient chunking (900-1200 tokens, 120-150 overlap)
 - Batch embedding generation
 - Embedding caching
 - Structured metadata storage
+- Performance timing and monitoring
 """
 import asyncio
 import logging
+import time
 from typing import List, Dict, Optional, Tuple
 import hashlib
 import json
@@ -354,7 +356,7 @@ class DocumentProcessor:
                                      pages: List[Dict],
                                      filename: str = "document.pdf") -> Dict:
         """
-        Process document asynchronously.
+        Process document asynchronously with performance tracking.
         
         Args:
             document_id: Unique document ID
@@ -364,18 +366,25 @@ class DocumentProcessor:
         Returns:
             Processing result with chunks and metadata
         """
-        logger.info(f"Starting async processing of {filename} ({len(pages)} pages)")
+        doc_start_time = time.time()
+        logger.info(f"📄 Starting document processing: {filename} ({len(pages)} pages)")
         
         metadata = DocumentMetadata(document_id, filename, len(pages))
         
         # Stage 1: Text extraction
+        extract_start = time.time()
         all_text = self._extract_text(pages)
+        extract_time = time.time() - extract_start
+        logger.info(f"   ✅ Text extraction: {extract_time:.3f}s | {len(all_text)} chars")
         
         # Stage 2: Table extraction
+        table_start = time.time()
         tables = self.table_extractor.extract_tables(all_text)
-        logger.info(f"Extracted {len(tables)} tables from document")
+        table_time = time.time() - table_start
+        logger.info(f"   ✅ Table extraction: {table_time:.3f}s | {len(tables)} tables found")
         
         # Stage 3: Chunking
+        chunk_start = time.time()
         chunks = self.chunker.chunk_text(
             all_text,
             metadata={
@@ -384,13 +393,16 @@ class DocumentProcessor:
                 "total_pages": len(pages)
             }
         )
+        chunk_time = time.time() - chunk_start
+        logger.info(f"   ✅ Chunking: {chunk_time:.3f}s | {len(chunks)} chunks created")
         
         # Stage 4: Batch embedding (will be done by vector store)
         # Cache ready for retrieval, embedding done by vector store in batch
         
         metadata.chunk_count = len(chunks)
         
-        logger.info(f"Processing complete: {len(chunks)} chunks from {filename}")
+        total_time = time.time() - doc_start_time
+        logger.info(f"📊 Processing complete: {total_time:.3f}s total | Extract: {extract_time:.3f}s | Table: {table_time:.3f}s | Chunk: {chunk_time:.3f}s")
         
         return {
             "document_id": document_id,
@@ -398,7 +410,8 @@ class DocumentProcessor:
             "chunks": chunks,
             "tables": tables,
             "metadata": metadata.to_dict(),
-            "processed_at": datetime.utcnow().isoformat()
+            "processed_at": datetime.utcnow().isoformat(),
+            "processing_time_s": total_time
         }
     
     def _extract_text(self, pages: List[Dict]) -> str:

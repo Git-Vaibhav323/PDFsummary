@@ -14,6 +14,16 @@ from typing import Dict, Optional, List
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
+# response_handler.py
+
+def handle_visualization_failure(answer, extracted_data):
+    return {
+        "answer": answer,
+        "visualization": {
+            "chart_type": "data_only",
+            "data": extracted_data
+        }
+    }
 
 
 class ChartObject(BaseModel):

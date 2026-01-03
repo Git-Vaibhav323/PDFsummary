@@ -6,6 +6,7 @@ import { Button } from "./ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
 import UploadCard from "./UploadCard";
 import StatusBadge from "./StatusBadge";
+import FinanceAgent from "./FinanceAgent";
 import { formatFileSize } from "@/lib/utils";
 
 interface SidebarProps {
@@ -15,6 +16,9 @@ interface SidebarProps {
   onUploadError: (error: string) => void;
   onClearChat: () => void;
   onRemoveFile?: () => void;
+  onOpenFinanceAgent?: () => void;
+  isFinanceAgentProcessing?: boolean;
+  financeAgentProcessedCount?: number;
   messageCount: number;
   uploadedFileName?: string;
   uploadedFileSize?: number;
@@ -28,6 +32,9 @@ export default function Sidebar({
   onUploadError,
   onClearChat,
   onRemoveFile,
+  onOpenFinanceAgent,
+  isFinanceAgentProcessing = false,
+  financeAgentProcessedCount = 0,
   messageCount,
   uploadedFileName,
   uploadedFileSize,
@@ -110,6 +117,16 @@ export default function Sidebar({
           </CardContent>
         </Card>
       </div>
+
+      {/* Finance Agent Section */}
+      {isPDFLoaded && (
+        <FinanceAgent
+          onOpenFinanceAgent={onOpenFinanceAgent || (() => {})}
+          disabled={!isPDFLoaded}
+          isProcessing={isFinanceAgentProcessing}
+          processedCount={financeAgentProcessedCount}
+        />
+      )}
 
       {/* Conversation History Section */}
       {children}

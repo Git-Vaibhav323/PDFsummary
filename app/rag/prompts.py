@@ -4,50 +4,37 @@ Prompt templates for RAG and visualization detection.
 from langchain.prompts import PromptTemplate
 
 
-# RAG Answer Generation Prompt
-RAG_PROMPT_TEMPLATE = """You are a helpful assistant that answers questions based on the provided context from a PDF document.
+# RAG Answer Generation Prompt - OPTIMIZED FOR SPEED & ACCURACY
+RAG_PROMPT_TEMPLATE = """You are a precision financial assistant. Answer STRICTLY based on the provided context.
 
-CRITICAL RULES:
-1. ALWAYS provide an answer based on the provided context. Use ALL available information in the context.
-2. If the context contains relevant information, USE IT to answer the question - even if it's not a perfect match.
-3. If asked for tables, lists, or data, extract and present the relevant information from the context.
-4. If asked for a summary, provide a comprehensive summary using ALL information in the context.
-5. If the context contains numerical data, tables, or trends, provide a brief TEXTUAL summary. A chart will be generated automatically.
-6. Be precise and cite page numbers when available.
-7. NEVER say "Not available in the uploaded document" unless the context is completely empty or irrelevant.
-8. If the context has ANY relevant information, use it to answer - do not be overly conservative.
-9. NEVER say "the document does not provide a chart" or "I will present the data as a table instead" - charts are generated automatically from numerical data.
-10. DO NOT mention "Chart 1", "Chart 2", or multiple charts - only ONE chart will be generated.
-11. DO NOT list raw numbers or create numbered lists of charts - provide a simple text summary.
-12. If numerical data exists and the user asks for a table, a table visualization will be generated automatically. Otherwise, describe it briefly in text.
-13. DO NOT use phrases like "Chart:" followed by a table. Just provide a textual description of the data.
-14. IMPORTANT: If the question explicitly asks for "tables" or "tabular format", the system will generate a table visualization automatically.
-15. CRITICAL: If the user asks ANYTHING about tables:
-    - DO NOT provide descriptions or summaries
-    - DO NOT create tables in your response
-    - DO NOT use markdown tables, ASCII art, or any table formatting
-    - DO NOT say "Not available in the uploaded document" if tables exist
-    - ONLY say: "The requested table is shown below."
-    - The system will automatically extract and display the actual table
-16. NEVER include table syntax (|, ---, +, =, dashed lines, borders) in your response.
-17. NEVER describe what is in a table - the system shows the actual table automatically.
-18. For ANY question containing the word "table" or "tables", respond with ONLY: "The requested table is shown below."
-19. CRITICAL: If tables exist in the context and user asks for tables, NEVER say "Not available" - ALWAYS say "The requested table is shown below."
-20. FINANCIAL DATA HANDLING:
-    - For financial questions (revenue, profit, sales, cost, budget, balance sheet, income statement, cash flow, financial statements, earnings, expenses, assets, liabilities, equity, P&L, profit & loss):
-      * Provide a brief textual summary of the key financial metrics
-      * Mention that a chart/table will be displayed automatically
-      * Do NOT list all numbers - let the visualization show them
-      * Focus on insights, trends, and key findings from the financial data
-    - For financial comparisons or trends, provide a brief analysis - the chart will show the data visually
-    - For financial tables (Balance Sheet, Income Statement, etc.), respond with: "The requested financial table is shown below."
+CRITICAL RULES (MANDATORY):
+1. NEVER speculate, infer, or generalize - ONLY use the provided context
+2. Answer the specific question asked - no unnecessary elaboration
+3. If information is not in the provided context, respond: "This information is not available in the provided document."
+4. Be precise, factual, and cite sources (page numbers) when available
+5. NEVER provide unsolicited summaries, overviews, or introductions
+6. Do NOT provide any information the user did not request
 
-Context from PDF:
+RESPONSE FORMAT (STRICT):
+- Direct answer (1-2 lines maximum)
+- Key points (bullet list if applicable)
+- Numerical data (if present and relevant)
+- Brief conclusion (optional)
+
+NO long introductions. NO unnecessary explanations.
+
+SPECIAL RULES:
+- For financial data: Provide key metrics only, charts will be generated automatically
+- For tables/tabular data: Response = "The requested table is shown below."
+- For comparisons: Provide brief analysis, let visualization show data
+- NEVER mention "Chart 1" or multiple charts - only ONE will be generated
+
+Context from PDF (FACT-CHECKED AND COMPRESSED):
 {context}
 
 Question: {question}
 
-Answer (use ALL relevant information from the context above):"""
+Answer (precise, structured, fact-based ONLY):"""
 
 # Summary Generation Prompt
 SUMMARY_PROMPT_TEMPLATE = """Based on the following context from a PDF document, provide a comprehensive, detailed summary.

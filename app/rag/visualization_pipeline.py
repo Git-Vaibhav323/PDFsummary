@@ -18,6 +18,28 @@ from app.rag.prompts import (
 
 logger = logging.getLogger(__name__)
 
+# visualization_pipeline.py
+
+def infer_chart_type(data):
+    """
+    Enterprise-safe heuristic chart inference.
+    """
+    if not data or not isinstance(data, list):
+        return None
+
+    numeric_values = [
+        row.get("value")
+        for row in data
+        if isinstance(row.get("value"), (int, float))
+    ]
+
+    if len(numeric_values) >= 2:
+        return "bar"
+
+    if len(numeric_values) == 1:
+        return "pie"
+
+    return None
 
 class VisualizationDetector:
     """Detects if visualization is needed for a question/context pair."""
@@ -47,45 +69,21 @@ class VisualizationDetector:
             return False
         
         # Quick heuristic checks first (no LLM call)
-        question_lower = question.lower()
+        question_lower = question.lower().strip()
         
-        # Explicit chart/graph keywords
-        chart_keywords = [
-            'chart', 'graph', 'visualize', 'bar chart', 'line chart', 'pie chart',
-            'show chart', 'display chart', 'graph', 'plot', 'comparison chart',
-            'trend chart', 'financial chart', 'analysis chart'
+        # CRITICAL: Explicit chart/graph/table requests - ALWAYS visualize
+        explicit_chart_keywords = [
+            'chart', 'charts', 'graph', 'graphs', 'visualize', 'visualization', 'visualizations',
+            'bar chart', 'line chart', 'pie chart', 'bar graph', 'line graph', 'pie graph',
+            'show chart', 'display chart', 'give me chart', 'give me charts',
+            'generate chart', 'create chart', 'plot', 'plotting',
+            'table', 'tables', 'tabular', 'show table', 'display table', 'tabular format',
+            'financial charts', 'financial data', 'financial graphs'
         ]
         
-        # Explicit table keywords
-        table_keywords = [
-            'table', 'tabular', 'show table', 'display table', 'tabular format',
-            'balance sheet', 'income statement', 'trial balance'
-        ]
-        
-        # General visualization keywords (will be determined by context)
-        viz_keywords = [
-            'show', 'compare', 'trend', 'display', 'breakdown',
-            'distribution', 'proportion', 'percentage', 'ratio',
-            # Financial keywords
-            'revenue', 'profit', 'sales', 'cost', 'budget', 'balance',
-            'income', 'expense', 'asset', 'liability', 'equity', 'earnings',
-            'margin', 'financial', 'statement', 'p&l', 'profit & loss',
-            'cash flow', 'financial data', 'financial metrics', 'financial performance'
-        ]
-        
-        # Check for explicit chart request
-        if any(keyword in question_lower for keyword in chart_keywords):
-            logger.debug(f"Chart keyword detected in question")
-            return True
-        
-        # Check for explicit table request
-        if any(keyword in question_lower for keyword in table_keywords):
-            logger.debug(f"Table keyword detected in question")
-            return True
-        
-        # Check for general visualization keywords
-        if any(keyword in question_lower for keyword in viz_keywords):
-            logger.debug(f"Visualization keyword detected in question")
+        # Check for ANY explicit chart/table request
+        if any(keyword in question_lower for keyword in explicit_chart_keywords):
+            logger.info(f"✅ Explicit visualization request detected: '{question}'")
             return True
         
         # Check if context has numerical data
@@ -174,6 +172,96 @@ class DataExtractor:
             
             logger.info(f"📊 Extraction request - Chart: {is_chart_request}, Table: {is_table_request}")
             
+            # For generic "show me charts" requests, use Mistral to extract ALL financial data
+            if (is_chart_request or is_table_request) and ('financial' in question_lower or 'charts' in question_lower or 'table' in question_lower):
+                logger.info("🎯 Generic visualization request - extracting all financial data with Mistral")
+                try:
+                    import httpx
+                    
+                    mistral_prompt = f"""Extract ALL financial data from this document in JSON format.
+                    
+Document excerpt:
+{context_limited}
+
+Return a JSON object with multiple datasets for visualization:
+{{
+    "datasets": [
+        {{
+            "name": "Financial Summary",
+            "type": "table",
+            "headers": ["Item", "Amount"],
+            "rows": [["item1", "value1"], ["item2", "value2"]]
+        }},
+        {{
+            "name": "Revenue Breakdown",
+            "type": "bar",
+            "labels": ["Category1", "Category2"],
+            "values": [100, 200],
+            "title": "Revenue by Category"
+        }},
+        {{
+            "name": "Profit Trend",
+            "type": "line",
+            "labels": ["Q1", "Q2", "Q3", "Q4"],
+            "values": [1000, 1500, 1200, 1800],
+            "title": "Quarterly Profit Trend"
+        }}
+    ]
+}}
+
+Extract real data from the document. For each dataset, determine the best visualization type.
+Return ONLY valid JSON, no explanations."""
+
+                    response = httpx.post(
+                        "https://api.mistral.ai/v1/chat/completions",
+                        headers={
+                            "Authorization": f"Bearer {settings.mistral_api_key}",
+                            "Content-Type": "application/json"
+                        },
+                        json={
+                            "model": "mistral-small-latest",
+                            "messages": [{"role": "user", "content": mistral_prompt}],
+                            "temperature": 0
+                        },
+                        timeout=30
+                    )
+                    
+                    if response.status_code == 200:
+                        mistral_data = response.json()
+                        mistral_response = mistral_data.get("choices", [{}])[0].get("message", {}).get("content", "")
+                        
+                        # Parse Mistral response
+                        mistral_datasets = self._parse_json_response(mistral_response)
+                        if mistral_datasets and "datasets" in mistral_datasets:
+                            logger.info(f"✅ Mistral extracted {len(mistral_datasets.get('datasets', []))} datasets")
+                            # Return first valid chart dataset (not table if chart requested)
+                            datasets = mistral_datasets.get("datasets", [])
+                            for dataset in datasets:
+                                # Normalize: 'type' -> 'chart_type'
+                                if 'type' in dataset and 'chart_type' not in dataset:
+                                    dataset['chart_type'] = dataset.pop('type')
+                                
+                                chart_type = dataset.get('chart_type')
+                                # If chart requested, skip tables and return first valid chart
+                                if is_chart_request and chart_type == 'table':
+                                    continue
+                                # If chart type is valid, return this dataset
+                                if chart_type in ['bar', 'line', 'pie', 'table', 'stacked_bar']:
+                                    logger.info(f"✅ Returning dataset with chart_type={chart_type}")
+                                    return dataset
+                            
+                            # Fallback: return first dataset if no valid one found
+                            if datasets:
+                                dataset = datasets[0]
+                                if 'type' in dataset and 'chart_type' not in dataset:
+                                    dataset['chart_type'] = dataset.pop('type')
+                                logger.warning(f"No valid chart dataset found, returning first: chart_type={dataset.get('chart_type')}")
+                                return dataset
+                    
+                except Exception as mistral_error:
+                    logger.warning(f"Mistral extraction failed: {mistral_error}, falling back to LLM")
+            
+            # Fallback: Use OpenAI LLM for data extraction
             prompt = DATA_EXTRACTION_PROMPT.format(
                 question=question,
                 context=context_limited
@@ -186,8 +274,10 @@ class DataExtractor:
             chart_data = self._parse_json_response(response_text)
             
             if not chart_data:
-                logger.warning("Failed to parse chart data JSON")
-                return None
+                logger.warning("Failed to parse chart data JSON, attempting generic extraction...")
+                # Try to auto-generate chart from numbers in context
+                return self._auto_extract_from_context(context_limited, is_chart_request)
+
             
             # CRITICAL: Enforce chart vs table distinction based on user request
             chart_type = chart_data.get('chart_type')

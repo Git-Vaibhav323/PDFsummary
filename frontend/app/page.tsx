@@ -1,11 +1,12 @@
 "use client";
 
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import TopNavbar from "@/components/TopNavbar";
 import Sidebar from "@/components/Sidebar";
 import ChatWindow from "@/components/ChatWindow";
 import ChatInput from "@/components/ChatInput";
 import ConversationHistory from "@/components/ConversationHistory";
+import FAQAccordion from "@/components/FAQAccordion";
 import { apiClient, ChatResponse } from "@/lib/api";
 import { Card } from "@/components/ui/card";
 
@@ -29,7 +30,15 @@ interface Message {
   timestamp: Date;
 }
 
+interface FinanceAgentAnswer {
+  id: number;
+  title: string;
+  question: string;
+  answer: string;
+}
+
 export default function Home() {
+  const faqRef = useRef<any>(null);
   const [isPDFLoaded, setIsPDFLoaded] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -38,6 +47,10 @@ export default function Home() {
   const [uploadedFileName, setUploadedFileName] = useState<string | undefined>();
   const [uploadedFileSize, setUploadedFileSize] = useState<number | undefined>();
   const [currentConversationId, setCurrentConversationId] = useState<string | undefined>();
+  const [showFinanceAgent, setShowFinanceAgent] = useState(false);
+  const [faqAllAnswered, setFaqAllAnswered] = useState(false);
+  const [faqProcessing, setFaqProcessing] = useState(false);
+  const [faqProcessedCount, setFaqProcessedCount] = useState(0);
 
   const handleUploadSuccess = useCallback((fileName?: string, fileSize?: number) => {
     setIsPDFLoaded(true);
@@ -46,6 +59,9 @@ export default function Home() {
     setUploadedFileName(fileName);
     setUploadedFileSize(fileSize);
     setCurrentConversationId(undefined); // Reset conversation on new upload
+    setFaqAllAnswered(false);
+    setFaqProcessing(false);
+    setFaqProcessedCount(0);
   }, []);
 
   const handleUploadError = useCallback((errorMessage: string) => {
@@ -60,13 +76,16 @@ export default function Home() {
         return;
       }
 
-      // Add user message
+      // Add user message (always - unified flow for Finance Agent and chat)
       const userMessage: Message = {
         role: "user",
         content: question,
         timestamp: new Date(),
       };
+      
+      // Add to chat - always, for both Finance Agent and regular chat
       setMessages((prev) => [...prev, userMessage]);
+      
       setIsLoading(true);
       setError(null);
 
@@ -181,13 +200,46 @@ export default function Home() {
           visualization: visualization || undefined,
           timestamp: new Date(),
         };
+        
+        // Add to chat - always, for both Finance Agent and regular chat
         setMessages((prev) => [...prev, assistantMessage]);
+
+        // Finance Agent answers are now handled uniformly with all messages
+        // They appear in the messages array like regular chat messages
+        if (showFinanceAgent && !faqAllAnswered) {
+          // Track FAQ progress for UI feedback
+          const faqQuestions = [
+            { id: 1, question: "Summarize the overall financial performance of the company in 1-2 sentences." },
+            { id: 2, question: "What was the revenue change compared to the previous period? (brief)" },
+            { id: 3, question: "List key profitability metrics (net profit, operating margin, EBITDA) in one line each." },
+            { id: 4, question: "What are the top 3 cost components impacting financial performance?" },
+            { id: 5, question: "Briefly summarize cash flow from operations, investing, and financing." },
+            { id: 6, question: "What is the current debt position? (summary)" },
+            { id: 7, question: "What are the 2-3 main financial risks highlighted?" },
+            { id: 8, question: "Which business segment or region performed best? (brief)" },
+            { id: 9, question: "Is there forward-looking guidance provided? (yes/no + brief outlook)" },
+            { id: 10, question: "What is the key financial takeaway for investors in 1 sentence?" },
+          ];
+
+          const matchedFAQ = faqQuestions.find((faq) => faq.question === question);
+          if (matchedFAQ && faqRef.current && faqRef.current.setAnswer) {
+            // Still provide ref-based answer for FAQ accordion visual feedback
+            console.log(`[FAQ] Setting answer for question ${matchedFAQ.id}:`, response.answer.substring(0, 100));
+            setTimeout(() => {
+              if (faqRef.current && faqRef.current.setAnswer) {
+                faqRef.current.setAnswer(matchedFAQ.id, response.answer);
+              }
+            }, 0);
+          }
+        }
       } catch (err: any) {
         const errorMessage: Message = {
           role: "assistant",
           content: `Error: ${err.message || "Failed to get response"}`,
           timestamp: new Date(),
         };
+        
+        // Add error to chat - always, for both Finance Agent and regular chat
         setMessages((prev) => [...prev, errorMessage]);
         setError(err.message || "Failed to get response");
       } finally {
@@ -207,6 +259,7 @@ export default function Home() {
     setMessages([]);
     setError(null);
     setCurrentConversationId(undefined);
+    setShowFinanceAgent(false); // Close Finance Agent when starting new conversation
   }, []);
 
   const handleSelectConversation = useCallback(async (conversationId: string) => {
@@ -214,6 +267,7 @@ export default function Home() {
       return; // Already selected
     }
 
+    setShowFinanceAgent(false); // Close Finance Agent when selecting conversation
     setIsLoading(true);
     setError(null);
     try {
@@ -255,6 +309,61 @@ export default function Home() {
     }
   }, []);
 
+  const handleOpenFinanceAgent = useCallback(async () => {
+    setShowFinanceAgent(true);
+    
+    // Only process if not already done
+    if (faqProcessedCount === 0) {
+      setFaqProcessing(true);
+      setFaqProcessedCount(0);
+      
+      const faqQuestions = [
+        { id: 1, question: "Summarize the overall financial performance of the company in 1-2 sentences." },
+        { id: 2, question: "What was the revenue change compared to the previous period? (brief)" },
+        { id: 3, question: "List key profitability metrics (net profit, operating margin, EBITDA) in one line each." },
+        { id: 4, question: "What are the top 3 cost components impacting financial performance?" },
+        { id: 5, question: "Briefly summarize cash flow from operations, investing, and financing." },
+        { id: 6, question: "What is the current debt position? (summary)" },
+        { id: 7, question: "What are the 2-3 main financial risks highlighted?" },
+        { id: 8, question: "Which business segment or region performed best? (brief)" },
+        { id: 9, question: "Is there forward-looking guidance provided? (yes/no + brief outlook)" },
+        { id: 10, question: "What is the key financial takeaway for investors in 1 sentence?" },
+      ];
+
+      // Process all questions in parallel for faster completion
+      const promises = faqQuestions.map((faq) =>
+        apiClient
+          .sendMessage(faq.question, currentConversationId)
+          .then((response) => {
+            if (response.conversation_id && response.conversation_id !== currentConversationId) {
+              setCurrentConversationId(response.conversation_id);
+            }
+
+            if (faqRef.current && faqRef.current.setAnswer) {
+              faqRef.current.setAnswer(faq.id, response.answer);
+            }
+
+            setFaqProcessedCount((prev) => prev + 1);
+            return response;
+          })
+          .catch((err) => {
+            console.error(`Error processing FAQ ${faq.id}:`, err);
+            setFaqProcessedCount((prev) => prev + 1);
+          })
+      );
+
+      await Promise.all(promises);
+      setFaqProcessing(false);
+    }
+  }, [faqProcessedCount, currentConversationId]);
+
+  const handleFAQQuestionClick = useCallback(
+    (question: string) => {
+      handleSendMessage(question);
+    },
+    [handleSendMessage]
+  );
+
   // Check backend health on mount (silently, don't show error immediately)
   useEffect(() => {
     const checkBackend = async () => {
@@ -282,6 +391,8 @@ export default function Home() {
     return () => clearTimeout(timeoutId);
   }, []);
 
+  // Finance Agent processing now happens on button click, not on PDF upload
+  
   return (
     <div className="flex h-screen flex-col">
       <TopNavbar isPDFLoaded={isPDFLoaded} isProcessing={isProcessing} />
@@ -293,6 +404,9 @@ export default function Home() {
           onUploadError={handleUploadError}
           onClearChat={handleClearChat}
           onRemoveFile={handleRemoveFile}
+          onOpenFinanceAgent={handleOpenFinanceAgent}
+          isFinanceAgentProcessing={faqProcessing}
+          financeAgentProcessedCount={faqProcessedCount}
           messageCount={messages.length}
           uploadedFileName={uploadedFileName}
           uploadedFileSize={uploadedFileSize}
@@ -305,16 +419,32 @@ export default function Home() {
           />
         </Sidebar>
         <main className="flex flex-1 flex-col overflow-hidden min-h-0">
-          <ChatWindow
-            messages={messages}
-            isLoading={isLoading}
-            isPDFLoaded={isPDFLoaded}
-            onSuggestionClick={handleSendMessage}
-          />
-          <ChatInput
-            onSendMessage={handleSendMessage}
-            disabled={!isPDFLoaded || isLoading}
-          />
+          {showFinanceAgent ? (
+            <div className="flex flex-col overflow-hidden h-full gap-0">
+              {/* Finance Agent - FAQ Section Only */}
+              <div className="flex-1 overflow-y-auto">
+                <FAQAccordion
+                  ref={faqRef}
+                  onQuestionClick={handleFAQQuestionClick}
+                  onAllAnswered={setFaqAllAnswered}
+                  onClose={() => setShowFinanceAgent(false)}
+                />
+              </div>
+            </div>
+          ) : (
+            <>
+              <ChatWindow
+                messages={messages}
+                isLoading={isLoading}
+                isPDFLoaded={isPDFLoaded}
+                onSuggestionClick={handleSendMessage}
+              />
+              <ChatInput
+                onSendMessage={handleSendMessage}
+                disabled={!isPDFLoaded || isLoading}
+              />
+            </>
+          )}
         </main>
       </div>
       {error && (

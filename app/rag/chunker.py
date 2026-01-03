@@ -1,30 +1,40 @@
 """
-Text chunking with safe token handling to avoid overflow.
-Uses recursive character splitting with overlap.
+Token-based text chunking optimized for performance.
+Uses recursive splitting with token-aware sizing.
 """
 from typing import List, Dict
 import logging
+import time
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 
 logger = logging.getLogger(__name__)
 
+# OpenAI text-embedding-3-small token estimate: ~4 characters = 1 token
+CHARS_PER_TOKEN = 4
+
 
 class TextChunker:
-    """Chunks text safely to avoid token overflow."""
+    """Chunks text using token-aware sizing for optimal performance."""
     
-    def __init__(self, chunk_size: int = 1000, chunk_overlap: int = 200):
+    def __init__(self, chunk_size: int = 1050, chunk_overlap: int = 135):
         """
-        Initialize the text chunker.
+        Initialize the text chunker with performance-optimized defaults.
         
         Args:
-            chunk_size: Maximum size of each chunk in characters
-            chunk_overlap: Number of characters to overlap between chunks
+            chunk_size: Target chunk size in tokens (default: 1050 ≈ 4200 chars)
+            chunk_overlap: Overlap in tokens (default: 135 ≈ 540 chars)
         """
-        self.chunk_size = chunk_size
-        self.chunk_overlap = chunk_overlap
+        # Convert tokens to characters for splitter (1 token ≈ 4 chars)
+        self.chunk_size_tokens = chunk_size
+        self.chunk_overlap_tokens = chunk_overlap
+        self.chunk_size_chars = chunk_size * CHARS_PER_TOKEN
+        self.chunk_overlap_chars = chunk_overlap * CHARS_PER_TOKEN
+        
+        logger.info(f"TextChunker initialized: {chunk_size} tokens (~{self.chunk_size_chars} chars), overlap: {chunk_overlap} tokens (~{self.chunk_overlap_chars} chars)")
+        
         self.splitter = RecursiveCharacterTextSplitter(
-            chunk_size=chunk_size,
-            chunk_overlap=chunk_overlap,
+            chunk_size=self.chunk_size_chars,
+            chunk_overlap=self.chunk_overlap_chars,
             length_function=len,
             separators=["\n\n", "\n", ". ", " ", ""]
         )
@@ -47,6 +57,7 @@ class TextChunker:
             logger.warning("Empty text provided for chunking")
             return []
         
+        start_time = time.time()
         base_metadata = metadata or {}
         chunks = self.splitter.split_text(text)
         
@@ -54,11 +65,15 @@ class TextChunker:
         for idx, chunk_text in enumerate(chunks):
             if not chunk_text.strip():
                 continue
-                
+            
+            # Estimate token count for logging
+            estimated_tokens = len(chunk_text) / CHARS_PER_TOKEN
+            
             chunk_metadata = {
                 **base_metadata,
                 "chunk_index": idx,
-                "chunk_size": len(chunk_text)
+                "chunk_size": len(chunk_text),
+                "estimated_tokens": int(estimated_tokens)
             }
             
             chunk_list.append({
@@ -67,7 +82,8 @@ class TextChunker:
                 "metadata": chunk_metadata
             })
         
-        logger.info(f"Created {len(chunk_list)} chunks from text")
+        elapsed = time.time() - start_time
+        logger.info(f"✅ Created {len(chunk_list)} chunks in {elapsed:.2f}s | Avg: {len(chunk_list)/max(elapsed, 0.01):.0f} chunks/sec")
         return chunk_list
     
     def chunk_pages(self, pages: List[Dict]) -> List[Dict]:

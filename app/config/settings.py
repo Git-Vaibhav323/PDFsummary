@@ -30,9 +30,11 @@ class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
     
     # OpenAI API Configuration
-    openai_api_key: str = Field(..., description="OpenAI API key (required)")
+    openai_api_key: str = Field(..., description="OpenAI API key (required for both chat and embeddings)")
     openai_model: str = "gpt-4.1-mini"  # Fast, deterministic reasoning model (FIXED for enterprise)
-    embedding_model_name: str = "text-embedding-3-small"  # Scalable embeddings (FIXED for enterprise)
+    
+    # Embedding Configuration (using OpenAI API)
+    embedding_model_name: str = "text-embedding-3-small"  # OpenAI embedding model
     
     # Mistral API Configuration (for OCR and preprocessing)
     mistral_api_key: Optional[str] = Field(default=None, description="Mistral API key (optional, required for OCR)")
@@ -59,9 +61,6 @@ class Settings(BaseSettings):
         if len(v) < 20:
             raise ValueError(f"OPENAI_API_KEY appears to be invalid (too short: {len(v)} chars). Please check your .env file.")
         return v
-    
-    # Local Embeddings Configuration (no API key needed)
-    embedding_model: str = "all-MiniLM-L6-v2"  # Fast, lightweight sentence-transformers model
     
     # Vector Database Configuration
     chroma_persist_directory: str = "./chroma_db"

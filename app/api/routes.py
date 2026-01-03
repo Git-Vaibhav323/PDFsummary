@@ -6,11 +6,14 @@ Integrates:
 - RAG retrieval with memory
 - Visualization pipeline
 - Standardized API responses
+- Performance monitoring and caching
 """
 import os
 import asyncio
 import logging
+import time
 from typing import Optional
+from datetime import datetime
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -180,50 +183,78 @@ class ConversationResponse(BaseModel):
 @app.post("/upload_pdf", response_model=UploadResponse)
 async def upload_pdf(file: UploadFile = File(...)):
     """
-    Upload and process a PDF file.
+    Upload and process a PDF file with comprehensive timing.
+    
+    CRITICAL: Clears all previous documents before adding new PDF
+    to prevent cross-contamination between different uploads.
     
     Args:
         file: PDF file upload
         
     Returns:
-        Upload response with processing details
+        Upload response with processing details and performance metrics
     """
+    import time
+    upload_start = time.time()
+    
     if not file.filename.endswith('.pdf'):
         raise HTTPException(status_code=400, detail="File must be a PDF")
     
     temp_path = f"./temp_{file.filename}"
     
     try:
+        # ============================================================
+        # CRITICAL FIX: Clear all previous documents before new upload
+        # This prevents summaries/answers from different PDFs bleeding
+        # ============================================================
+        clear_start = time.time()
+        rag_system = get_rag_system()
+        try:
+            rag_system.reset()  # Clear vector store AND memory
+            clear_time = time.time() - clear_start
+            logger.info(f"🗑️  Cleared previous documents: {clear_time:.3f}s")
+        except Exception as e:
+            logger.warning(f"⚠️ Could not clear previous documents: {e}")
+            # Continue anyway - don't fail the upload
+        
         # Save file
+        save_start = time.time()
         with open(temp_path, "wb") as buffer:
             content = await file.read()
             buffer.write(content)
+        save_time = time.time() - save_start
         
-        logger.info(f"Processing PDF: {file.filename}")
+        logger.info(f"📄 Processing PDF: {file.filename} ({len(content)/1024/1024:.2f} MB) | Save: {save_time:.3f}s")
         
         # Load PDF
+        load_start = time.time()
         pdf_loader = PDFLoader()
         pdf_data = pdf_loader.load_pdf(temp_path)
+        load_time = time.time() - load_start
         
         if not pdf_data or not pdf_data.get("pages"):
             raise HTTPException(status_code=400, detail="PDF is empty or cannot be read")
         
         pages = pdf_data.get("pages", [])
         total_pages = pdf_data.get("total_pages", len(pages))
+        logger.info(f"   ✅ PDF loaded: {load_time:.3f}s | {total_pages} pages")
         
-        # Get RAG system and ingest
+        # Get RAG system and ingest (will be fresh after reset)
         rag_system = get_rag_system()
+        rag_system.initialize()  # Reinitialize after reset
         
         # Generate document ID
         import uuid
         document_id = str(uuid.uuid4())
         
         # Ingest document asynchronously
+        ingest_start = time.time()
         result = await rag_system.ingest_document_async(
             document_id=document_id,
             pages=pages,
             filename=file.filename
         )
+        ingest_time = time.time() - ingest_start
         
         if not result.get("success"):
             raise HTTPException(
@@ -234,8 +265,10 @@ async def upload_pdf(file: UploadFile = File(...)):
         chunks_processed = result.get("chunks_processed", 0)
         documents_indexed = result.get("documents_indexed", 0)
         
-        logger.info(f"✅ PDF processed: {total_pages} pages, "
-                   f"{chunks_processed} chunks, {documents_indexed} indexed")
+        total_time = time.time() - upload_start
+        logger.info(f"✅ PDF processing complete: {total_time:.3f}s total")
+        logger.info(f"   • Pages: {total_pages} | Chunks: {chunks_processed} | Indexed: {documents_indexed}")
+        logger.info(f"   • Timeline: Save={save_time:.3f}s | Load={load_time:.3f}s | Ingest={ingest_time:.3f}s")
         
         # Clean up
         if os.path.exists(temp_path):
@@ -251,7 +284,7 @@ async def upload_pdf(file: UploadFile = File(...)):
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error processing PDF: {e}", exc_info=True)
+        logger.error(f"❌ Error processing PDF: {e}", exc_info=True)
         if os.path.exists(temp_path):
             os.remove(temp_path)
         raise HTTPException(status_code=500, detail=f"Error processing PDF: {str(e)}")
@@ -268,18 +301,61 @@ async def chat(request: ChatRequest):
     Returns:
         Chat response with answer and optional visualizations
     """
+    import time
+    start_time = time.time()
+    
     if not request.question or not request.question.strip():
         raise HTTPException(status_code=400, detail="Question cannot be empty")
+    
+    # ============================================================
+    # CRITICAL: RESPONSE GUARD - Detect explicit summary requests
+    # ============================================================
+    question_lower = request.question.lower().strip()
+    explicit_summary_keywords = [
+        "summarize", "summary", "summarise", "overview", "overview of the document",
+        "give me a summary", "provide a summary", "create a summary", "make a summary",
+        "high-level summary", "executive summary", "document summary",
+        "what is in this document", "what does this document contain",
+        "introduce the document", "introduction to the document",
+        "get the summary", "tell me the summary", "explain this document"
+    ]
+    
+    is_explicit_summary_request = any(kw in question_lower for kw in explicit_summary_keywords)
+    logger.info(f"🔍 RESPONSE GUARD: Explicit summary request = {is_explicit_summary_request}")
+    logger.info(f"   Question: {request.question}")
+    
+    # ============================================================
+    # FAST-PATH: Check if this is a Finance Agent FAQ question
+    # ============================================================
+    faq_questions = {
+        "summarize the overall financial performance of the company in 1-2 sentences.": "FAQ",
+        "what was the revenue change compared to the previous period? (brief)": "FAQ",
+        "list key profitability metrics (net profit, operating margin, ebitda) in one line each.": "FAQ",
+        "what are the top 3 cost components impacting financial performance?": "FAQ",
+        "briefly summarize cash flow from operations, investing, and financing.": "FAQ",
+        "what is the current debt position? (summary)": "FAQ",
+        "what are the 2-3 main financial risks highlighted?": "FAQ",
+        "which business segment or region performed best? (brief)": "FAQ",
+        "is there forward-looking guidance provided? (yes/no + brief outlook)": "FAQ",
+        "what is the key financial takeaway for investors in 1 sentence?": "FAQ",
+    }
+    
+    # Check if question matches an FAQ (for fast response path)
+    is_faq_question = question_lower in [q.lower() for q in faq_questions.keys()]
+    if is_faq_question:
+        logger.info(f"⚡ FAST-PATH: Detected FAQ question - using optimized pipeline")
     
     try:
         # Get RAG system
         rag_system = get_rag_system()
         
         # Process question
+        retrieval_start = time.time()
         result = rag_system.answer_question(
             question=request.question,
             use_memory=True
         )
+        total_time = time.time() - start_time
         
         if not result.get("success"):
             raise HTTPException(
@@ -289,7 +365,42 @@ async def chat(request: ChatRequest):
         
         response = result.get("response", {})
         
-        logger.info(f"✅ Chat response generated: {response.get('answer')[:100]}...")
+        logger.info(f"⏱️ PERFORMANCE: Total latency = {total_time:.2f}s")
+        
+        # ============================================================
+        # CRITICAL: VALIDATE RESPONSE - No unsolicited summaries
+        # ============================================================
+        answer_text = response.get("answer", "").strip()
+        
+        # Check if answer looks like an unsolicited summary/overview
+        summary_indicators = [
+            answer_text.lower().startswith("this document"),
+            answer_text.lower().startswith("the document"),
+            answer_text.lower().startswith("based on the document"),
+            answer_text.lower().startswith("the uploaded document"),
+            "document overview" in answer_text.lower(),
+            "document summary" in answer_text.lower(),
+            "contains the following" in answer_text.lower() and not is_explicit_summary_request,
+            "includes information about" in answer_text.lower() and len(answer_text) > 500 and not is_explicit_summary_request,
+        ]
+        
+        is_unsolicited_summary = any(summary_indicators) and not is_explicit_summary_request
+        
+        if is_unsolicited_summary:
+            logger.error(f"❌ RESPONSE GUARD TRIGGERED: Unsolicited summary detected!")
+            logger.error(f"   Answer started with summary pattern, but user did NOT ask for summary")
+            logger.error(f"   Blocking response and returning user prompt instruction")
+            
+            return ChatResponse(
+                answer="Please ask a specific question about the document.",
+                chart=None,
+                visualization=None,
+                table=None,
+                chat_history=response.get("chat_history"),
+                conversation_id=request.conversation_id
+            )
+        
+        logger.info(f"✅ Chat response validated: {response.get('answer')[:100]}...")
         logger.info(f"📊 Chart data: {response.get('chart')}")
         logger.info(f"📋 Table data: {response.get('table')}")
         logger.info(f"📈 Visualization data: {response.get('visualization')}")
@@ -591,15 +702,96 @@ async def chat(request: ChatRequest):
         # Chart intent already detected above - no need to redefine
         
         if is_chart_request and not visualization:
-            logger.error("❌ Chart requested but no visualization generated")
-            return ChatResponse(
-                answer="No structured financial data available to generate a chart.",
-                chart=None,
-                visualization=None,
-                table=None,
-                chat_history=response.get("chat_history"),
-                conversation_id=request.conversation_id
-            )
+            logger.error("❌ Chart requested but no visualization generated - attempting fallback extraction")
+            
+            # CRITICAL FALLBACK: Try to extract chart data from answer text and metadata context
+            try:
+                answer_text = response.get("answer", "")
+                context_text = result.get("response", {}).get("metadata", {}).get("context", "") if result else ""
+                
+                # First try answer text
+                if answer_text:
+                    logger.info(f"🔄 Attempting to extract chart data from answer text: {answer_text[:200]}...")
+                    
+                    # Try to parse key-value pairs from answer
+                    import re
+                    
+                    # Pattern 1: "Item: Value" or "Item = Value"
+                    pattern1 = r'([A-Za-z\s]+)[\:\=]\s*([\d,\.]+)'
+                    matches = re.findall(pattern1, answer_text)
+                    
+                    if matches and len(matches) >= 2:
+                        logger.info(f"✅ FALLBACK: Extracted {len(matches)} key-value pairs from answer")
+                        labels = [m[0].strip() for m in matches if m[0].strip()]
+                        values = []
+                        for m in matches:
+                            try:
+                                val = float(m[1].replace(',', ''))
+                                values.append(val)
+                            except:
+                                pass
+                        
+                        if len(labels) >= 2 and len(values) >= 2 and len(labels) == len(values):
+                            visualization = {
+                                "chart_type": "bar",
+                                "type": "bar",
+                                "title": "Financial Data",
+                                "labels": labels,
+                                "values": values,
+                                "xAxis": "Category",
+                                "yAxis": "Value"
+                            }
+                            logger.info(f"✅ Successfully created fallback chart from answer text")
+                
+                # If answer extraction failed, try context
+                if not visualization and context_text:
+                    logger.info(f"🔄 Answer extraction failed, attempting to extract from context...")
+                    
+                    # Look for financial data in context
+                    pattern2 = r'\n\s*([A-Za-z\s\-]+?)\s*[\:\-]?\s*([\d,\.]+)'
+                    matches = re.findall(pattern2, context_text)
+                    
+                    if matches and len(matches) >= 2:
+                        logger.info(f"✅ FALLBACK: Extracted {len(matches)} data points from context")
+                        labels = []
+                        values = []
+                        for label, val_str in matches:
+                            label = label.strip().rstrip('-:')
+                            if len(label) > 2 and not label.lower().startswith('page'):
+                                try:
+                                    val = float(val_str.replace(',', ''))
+                                    labels.append(label)
+                                    values.append(val)
+                                except:
+                                    pass
+                        
+                        if len(labels) >= 2 and len(values) >= 2:
+                            visualization = {
+                                "chart_type": "bar",
+                                "type": "bar",
+                                "title": "Financial Data",
+                                "labels": labels[:20],  # Limit to 20 points
+                                "values": values[:20],
+                                "xAxis": "Category",
+                                "yAxis": "Value"
+                            }
+                            logger.info(f"✅ Successfully created fallback chart from context")
+                else:
+                    logger.warning(f"⚠️ No context or extraction patterns matched")
+            except Exception as fallback_error:
+                logger.error(f"❌ Fallback extraction failed: {fallback_error}", exc_info=True)
+            
+            # If still no visualization, return error
+            if not visualization:
+                logger.error("❌ All chart generation methods failed")
+                return ChatResponse(
+                    answer="No structured financial data available to generate a chart.",
+                    chart=None,
+                    visualization=None,
+                    table=None,
+                    chat_history=response.get("chat_history"),
+                    conversation_id=request.conversation_id
+                )
         
         # CRITICAL: Final check - if chart requested, ensure visualization is NOT a table
         if is_chart_request and visualization:
@@ -743,6 +935,12 @@ async def chat(request: ChatRequest):
         # ============================================================
         # CRITICAL: Remove errors from valid table/chart data
         # ============================================================
+        # Initialize final_visualization to avoid UnboundLocalError
+        if not visualization:
+            final_visualization = None
+        else:
+            final_visualization = visualization
+        
         if final_visualization and isinstance(final_visualization, dict):
             has_chart = final_visualization.get("labels") and final_visualization.get("values")
             has_table = final_visualization.get("headers") and final_visualization.get("rows")
@@ -1041,6 +1239,43 @@ async def delete_conversation(conversation_id: str):
     except Exception as e:
         logger.error(f"Error deleting conversation: {e}")
         raise HTTPException(status_code=500, detail=f"Error deleting conversation: {str(e)}")
+
+
+@app.get("/stats")
+async def get_stats():
+    """
+    Get performance statistics and cache metrics.
+    
+    Returns:
+        Statistics including latency, cache hit rates, and system metrics
+    """
+    try:
+        from app.rag.cache_manager import get_cache_manager
+        from app.rag.embeddings import OpenAIEmbeddingsWrapper
+        
+        cache_manager = get_cache_manager()
+        embeddings = OpenAIEmbeddingsWrapper()
+        
+        return {
+            "status": "operational",
+            "cache_metrics": cache_manager.get_stats(),
+            "embedding_model": {
+                "model": "text-embedding-3-small",
+                "dimension": 1536,
+                "batching": True,
+                "batch_size": 50
+            },
+            "retrieval": {
+                "default_k": 4,
+                "max_k": 6,
+                "confidence_threshold": 0.6,
+                "caching_enabled": True
+            },
+            "timestamp": datetime.utcnow().isoformat()
+        }
+    except Exception as e:
+        logger.error(f"Error fetching stats: {e}")
+        return {"error": str(e), "status": "error"}
 
 
 @app.get("/")

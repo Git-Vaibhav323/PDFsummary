@@ -7,8 +7,11 @@ Pipeline steps:
 3. Perform vector similarity search
 4. Retrieve top-K chunks
 5. Generate answer strictly from retrieved context
+
+Performance optimized with timing logs and batched operations.
 """
 import logging
+import time
 from typing import List, Dict, Optional
 from langchain_openai import ChatOpenAI
 from app.config.settings import settings
@@ -91,10 +94,24 @@ class RAGRetriever:
             api_key=settings.openai_api_key,
             max_retries=2
         )
+        self.current_document_id: Optional[str] = None  # Document filter
+    
+    def set_document_filter(self, document_id: Optional[str]) -> None:
+        """
+        Set the document ID filter for retrieval.
+        
+        Args:
+            document_id: Document ID to filter by (None to disable filtering)
+        """
+        self.current_document_id = document_id
+        if document_id:
+            logger.info(f"🔐 Document filter set to: {document_id}")
+        else:
+            logger.info(f"🔓 Document filter disabled")
     
     def retrieve(self, query: str) -> List[Dict]:
         """
-        Retrieve relevant documents for query.
+        Retrieve relevant documents for query with performance tracking.
         
         Args:
             query: User query
@@ -106,21 +123,30 @@ class RAGRetriever:
             logger.warning("Empty query provided to retriever")
             return []
         
-        logger.info(f"Retrieving documents for: {query[:100]}")
+        start_time = time.time()
+        logger.info(f"🔍 Retrieving: {query[:80]}...")
         
         try:
-            # Perform similarity search
-            results = self.vector_store.similarity_search(query, k=self.top_k)
+            # Build filter if document_id is set
+            filter_dict = None
+            if self.current_document_id:
+                filter_dict = {"document_id": self.current_document_id}
+                logger.info(f"   📄 Filtering by document: {self.current_document_id}")
+            
+            # Perform similarity search with optional document filter
+            results = self.vector_store.similarity_search(query, k=self.top_k, filter_dict=filter_dict)
+            
+            elapsed = time.time() - start_time
             
             if not results:
-                logger.warning(f"No documents found for query: {query[:100]}")
+                logger.warning(f"⚠️ No documents found (retrieval took {elapsed:.3f}s)")
                 return []
             
-            logger.info(f"Retrieved {len(results)} relevant chunks")
+            logger.info(f"✅ Retrieved {len(results)} chunks in {elapsed:.3f}s | Avg score: {sum(r.get('score', 0) for r in results) / len(results):.3f}")
             return results
         
         except Exception as e:
-            logger.error(f"Error retrieving documents: {e}")
+            logger.error(f"❌ Error retrieving documents: {e}")
             return []
     
     def format_context(self, documents: List[Dict]) -> str:
@@ -152,7 +178,7 @@ class RAGRetriever:
                        context: str,
                        use_memory: bool = True) -> str:
         """
-        Generate answer strictly from retrieved context.
+        Generate answer strictly from retrieved context with timing.
         
         Args:
             question: Original user question
@@ -166,6 +192,8 @@ class RAGRetriever:
             logger.warning("No context available for answer generation")
             return "Not available in the uploaded document."
         
+        start_time = time.time()
+        
         # Rewrite question if needed
         rewritten_question = self.question_rewriter.rewrite_question(question, use_memory)
         
@@ -175,11 +203,14 @@ class RAGRetriever:
             question=rewritten_question
         )
         
-        logger.debug("Generating answer from context")
+        logger.debug("🤖 Generating answer from context...")
         
         try:
             response = self.llm.invoke(prompt)
             answer = response.content.strip()
+            
+            elapsed = time.time() - start_time
+            logger.info(f"✅ Answer generated in {elapsed:.3f}s | {len(answer)} chars")
             
             if not answer or answer.lower() == "not available":
                 return "Not available in the uploaded document."
@@ -187,14 +218,14 @@ class RAGRetriever:
             return answer
         
         except Exception as e:
-            logger.error(f"Error generating answer: {e}")
+            logger.error(f"❌ Error generating answer: {e}")
             return "Error processing your question. Please try again."
     
     def answer_question(self, 
                        question: str,
                        use_memory: bool = True) -> Dict:
         """
-        Complete RAG pipeline: retrieve + answer.
+        Complete RAG pipeline: retrieve + answer with comprehensive timing.
         
         Args:
             question: User question
@@ -203,25 +234,34 @@ class RAGRetriever:
         Returns:
             Dictionary with answer and metadata
         """
-        logger.info(f"Processing question: {question[:100]}")
+        pipeline_start = time.time()
+        logger.info(f"📋 RAG Pipeline: {question[:80]}...")
         
         # Step 1: Rewrite question with memory context
+        rewrite_start = time.time()
         rewritten_question = self.question_rewriter.rewrite_question(question, use_memory)
+        rewrite_time = time.time() - rewrite_start
         
         # Step 2: Retrieve relevant documents
+        retrieve_start = time.time()
         documents = self.retrieve(rewritten_question)
+        retrieve_time = time.time() - retrieve_start
         
         # Step 3: Format context
         context = self.format_context(documents)
         
         # Step 4: Generate answer
+        answer_start = time.time()
         answer = self.generate_answer(question, context, use_memory=False)  # Already rewritten
+        answer_time = time.time() - answer_start
         
         # Step 5: Add to memory
         from app.rag.memory import add_to_memory
         add_to_memory("user", question)
         add_to_memory("assistant", answer)
         
+        total_time = time.time() - pipeline_start
+        logger.info(f"📊 RAG Pipeline complete: {total_time:.3f}s total | Rewrite: {rewrite_time:.3f}s | Retrieve: {retrieve_time:.3f}s | Answer: {answer_time:.3f}s")
         return {
             "question": question,
             "rewritten_question": rewritten_question,
