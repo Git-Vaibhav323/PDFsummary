@@ -71,6 +71,7 @@ class Settings(BaseSettings):
     
     # Retrieval Configuration
     top_k_retrieval: int = 5
+    top_k_finance_agent: int = 3  # Faster retrieval for finance agent (less docs)
     
     # API Configuration
     # Render provides PORT environment variable, use 0.0.0.0 for production

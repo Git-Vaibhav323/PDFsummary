@@ -342,20 +342,22 @@ async def chat(request: ChatRequest):
     
     # Check if question matches an FAQ (for fast response path)
     is_faq_question = question_lower in [q.lower() for q in faq_questions.keys()]
-    if is_faq_question:
-        logger.info(f"⚡ FAST-PATH: Detected FAQ question - using optimized pipeline")
     
     try:
         # Get RAG system
         rag_system = get_rag_system()
         
-        # Process question
+        # Process question with fast mode for FAQ/finance agent questions
         retrieval_start = time.time()
         result = rag_system.answer_question(
             question=request.question,
-            use_memory=True
+            use_memory=not is_faq_question,  # Skip memory for FAQ questions
+            fast_mode=is_faq_question  # Use fast mode for finance agent
         )
         total_time = time.time() - start_time
+        
+        if is_faq_question:
+            logger.info(f"⚡ FAST-PATH COMPLETED: {total_time:.2f}s")
         
         if not result.get("success"):
             raise HTTPException(

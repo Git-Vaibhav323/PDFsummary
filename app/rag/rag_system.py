@@ -124,7 +124,7 @@ class EnterpriseRAGSystem:
                 "error": str(e)
             }
     
-    def answer_question(self, question: str, use_memory: bool = True) -> Dict:
+    def answer_question(self, question: str, use_memory: bool = True, fast_mode: bool = False) -> Dict:
         """
         Answer a question using RAG pipeline with caching and performance tracking.
         
@@ -133,6 +133,7 @@ class EnterpriseRAGSystem:
         Args:
             question: User question
             use_memory: Whether to use conversation memory
+            fast_mode: If True, use optimized fast retrieval (for finance agent)
             
         Returns:
             Dictionary with answer and optional visualizations
@@ -142,7 +143,7 @@ class EnterpriseRAGSystem:
         start_time = time.time()
         cache_manager = get_cache_manager()
         
-        logger.info(f"📋 Processing question: {question[:80]}...")
+        logger.info(f"📋 Processing question: {question[:80]}... {'⚡ FAST MODE' if fast_mode else ''}")
         
         # CRITICAL: Set document filter if document is loaded
         if self.current_document_id:
@@ -153,24 +154,26 @@ class EnterpriseRAGSystem:
             self.rag_retriever.set_document_filter(None)
         
         try:
-            # Step 1: Check response cache first
-            cached_response = cache_manager.get_response(question)
-            if cached_response:
-                logger.info(f"⚡ Cache HIT: Returning cached response")
-                return {
-                    "success": True,
-                    "response": cached_response,
-                    "metadata": {
-                        "source": "cache",
-                        "latency_s": time.time() - start_time
+            # Step 1: Check response cache first (skip cache in fast mode for freshness)
+            if not fast_mode:
+                cached_response = cache_manager.get_response(question)
+                if cached_response:
+                    logger.info(f"⚡ Cache HIT: Returning cached response")
+                    return {
+                        "success": True,
+                        "response": cached_response,
+                        "metadata": {
+                            "source": "cache",
+                            "latency_s": time.time() - start_time
+                        }
                     }
-                }
             
             # Step 2: RAG pipeline (retrieval + answer generation) with timing
             retrieval_start = time.time()
             rag_result = self.rag_retriever.answer_question(
                 question=question,
-                use_memory=use_memory
+                use_memory=use_memory,
+                fast_mode=fast_mode
             )
             retrieval_time = time.time() - retrieval_start
             
@@ -179,10 +182,10 @@ class EnterpriseRAGSystem:
             
             logger.info(f"✅ RAG Pipeline: {retrieval_time:.3f}s | Answer: {len(answer)} chars | Context: {len(context)} chars")
             
-            # Step 3: Visualization pipeline (non-blocking)
+            # Step 3: Visualization pipeline (skip in fast mode for speed)
             viz_start = time.time()
             viz_result = None
-            if context:
+            if not fast_mode and context:
                 viz_result = self.viz_pipeline.process(
                     question=question,
                     context=context,

@@ -109,12 +109,13 @@ class RAGRetriever:
         else:
             logger.info(f"🔓 Document filter disabled")
     
-    def retrieve(self, query: str) -> List[Dict]:
+    def retrieve(self, query: str, top_k: Optional[int] = None) -> List[Dict]:
         """
         Retrieve relevant documents for query with performance tracking.
         
         Args:
             query: User query
+            top_k: Number of results to retrieve (overrides default for fast queries)
             
         Returns:
             List of relevant document chunks
@@ -123,8 +124,11 @@ class RAGRetriever:
             logger.warning("Empty query provided to retriever")
             return []
         
+        # Use provided top_k or fall back to instance default
+        k = top_k if top_k is not None else self.top_k
+        
         start_time = time.time()
-        logger.info(f"🔍 Retrieving: {query[:80]}...")
+        logger.info(f"🔍 Retrieving: {query[:80]}... (top_k={k})")
         
         try:
             # Build filter if document_id is set
@@ -134,7 +138,7 @@ class RAGRetriever:
                 logger.info(f"   📄 Filtering by document: {self.current_document_id}")
             
             # Perform similarity search with optional document filter
-            results = self.vector_store.similarity_search(query, k=self.top_k, filter_dict=filter_dict)
+            results = self.vector_store.similarity_search(query, k=k, filter_dict=filter_dict)
             
             elapsed = time.time() - start_time
             
@@ -223,28 +227,38 @@ class RAGRetriever:
     
     def answer_question(self, 
                        question: str,
-                       use_memory: bool = True) -> Dict:
+                       use_memory: bool = True,
+                       fast_mode: bool = False) -> Dict:
         """
         Complete RAG pipeline: retrieve + answer with comprehensive timing.
         
         Args:
             question: User question
             use_memory: Whether to use conversation memory
+            fast_mode: If True, use fewer documents for faster response (for finance agent)
             
         Returns:
             Dictionary with answer and metadata
         """
         pipeline_start = time.time()
-        logger.info(f"📋 RAG Pipeline: {question[:80]}...")
+        logger.info(f"📋 RAG Pipeline: {question[:80]}... {'(FAST MODE)' if fast_mode else ''}")
         
-        # Step 1: Rewrite question with memory context
+        # Step 1: Rewrite question with memory context (skip if fast mode)
         rewrite_start = time.time()
-        rewritten_question = self.question_rewriter.rewrite_question(question, use_memory)
-        rewrite_time = time.time() - rewrite_start
+        if fast_mode or not use_memory:
+            rewritten_question = question  # Skip rewriting for speed
+            rewrite_time = 0
+        else:
+            rewritten_question = self.question_rewriter.rewrite_question(question, use_memory)
+            rewrite_time = time.time() - rewrite_start
         
-        # Step 2: Retrieve relevant documents
+        # Step 2: Retrieve relevant documents (use fewer docs if fast mode)
         retrieve_start = time.time()
-        documents = self.retrieve(rewritten_question)
+        if fast_mode:
+            from app.config.settings import settings
+            documents = self.retrieve(rewritten_question, top_k=settings.top_k_finance_agent)
+        else:
+            documents = self.retrieve(rewritten_question)
         retrieve_time = time.time() - retrieve_start
         
         # Step 3: Format context
@@ -255,10 +269,11 @@ class RAGRetriever:
         answer = self.generate_answer(question, context, use_memory=False)  # Already rewritten
         answer_time = time.time() - answer_start
         
-        # Step 5: Add to memory
-        from app.rag.memory import add_to_memory
-        add_to_memory("user", question)
-        add_to_memory("assistant", answer)
+        # Step 5: Add to memory (skip if fast mode to reduce overhead)
+        if not fast_mode:
+            from app.rag.memory import add_to_memory
+            add_to_memory("user", question)
+            add_to_memory("assistant", answer)
         
         total_time = time.time() - pipeline_start
         logger.info(f"📊 RAG Pipeline complete: {total_time:.3f}s total | Rewrite: {rewrite_time:.3f}s | Retrieve: {retrieve_time:.3f}s | Answer: {answer_time:.3f}s")
