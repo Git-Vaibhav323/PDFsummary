@@ -131,82 +131,43 @@ class VectorStore:
             
             logger.info(f"Adding {len(validated_texts)} chunks to vector store (out of {len(chunks)} total)")
             
-            # Track successful additions
-            successful_ids = []
-            failed_count = 0
-            
-            # For small batches, try direct addition first
-            if len(validated_texts) <= 25:
-                try:
-                    self.vectorstore.add_texts(
-                        texts=validated_texts,
-                        metadatas=validated_metadatas,
-                        ids=validated_ids
-                    )
-                    successful_ids = validated_ids
-                except Exception as e:
-                    error_str = str(e)
-                    # Check for API limits or quota errors
-                    if "limit: 0" in error_str or "free_tier" in error_str.lower() or "quota" in error_str.lower():
-                        raise ValueError(
-                            "❌ **OpenAI Embedding API Error**\n\n"
-                            "The OpenAI API has rate limits or quota restrictions.\n\n"
-                            "**Solutions:**\n"
-                            "1. 💳 **Check your OpenAI account** - Verify you have credits\n"
-                            "2. ⏱️ **Wait a moment** - Try again after a brief delay\n"
-                            "3. 🔑 **Verify API key** - Ensure OPENAI_API_KEY is correct in .env\n"
-                            "4. 🔄 **Restart the app** and try again"
-                        ) from e
-                    
-                    # If batch fails, try one at a time for small files
-                    logger.warning(f"Batch addition failed, trying individual chunks: {e}")
-                    for idx, (text, metadata, chunk_id) in enumerate(zip(validated_texts, validated_metadatas, validated_ids)):
-                        try:
-                            self.vectorstore.add_texts(
-                                texts=[text],
-                                metadatas=[metadata],
-                                ids=[chunk_id]
-                            )
-                            successful_ids.append(chunk_id)
-                        except Exception as individual_error:
-                            failed_count += 1
-                            error_str = str(individual_error)
-                            logger.error(f"Failed to add chunk {idx}: {individual_error}")
-                            
-                            # Check for API limits or quota errors
-                            if "limit: 0" in error_str or "free_tier" in error_str.lower() or "quota" in error_str.lower():
-                                # If all chunks fail, raise immediately
-                                if failed_count == len(validated_texts):
-                                    raise ValueError(
-                                        "❌ **OpenAI Embedding API Error**\n\n"
-                                        "All chunks failed to embed due to API limits.\n\n"
-                                        "**Solutions:**\n"
-                                        "1. 💳 **Check your OpenAI account** - Verify you have credits\n"
-                                        "2. ⏱️ **Wait a moment** - Try again after a brief delay\n"
-                                        "3. 🔑 **Verify API key** - Ensure OPENAI_API_KEY is correct in .env\n"
-                                        "4. 🔄 **Restart the app** and try again"
-                                    ) from individual_error
-            else:
-                # For larger batches, use normal flow
-                try:
-                    self.vectorstore.add_texts(
-                        texts=validated_texts,
-                        metadatas=validated_metadatas,
-                        ids=validated_ids
-                    )
-                    successful_ids = validated_ids
-                except Exception as e:
-                    error_str = str(e)
-                    if "limit: 0" in error_str or "free_tier" in error_str.lower() or "quota" in error_str.lower():
-                        raise ValueError(
-                            "❌ **OpenAI Embedding API Error**\n\n"
-                            "The OpenAI API has rate limits or quota restrictions.\n\n"
-                            "**Solutions:**\n"
-                            "1. 💳 **Check your OpenAI account** - Verify you have credits\n"
-                            "2. ⏱️ **Wait a moment** - Try again after a brief delay\n"
-                            "3. 🔑 **Verify API key** - Ensure OPENAI_API_KEY is correct in .env"
-                        ) from e
-                    raise
+            # CRITICAL FIX: Use our smart batching by pre-generating embeddings
+            # This bypasses LangChain's batching which doesn't respect token limits
+            try:
+                logger.info(f"🔄 Pre-generating embeddings with smart token-aware batching...")
+                
+                # Use our embeddings wrapper which has smart batching
+                embeddings_list = self.embeddings.embed_documents(validated_texts)
+                
+                logger.info(f"✅ Generated {len(embeddings_list)} embeddings successfully")
+                
+                # Now add to vector store with pre-computed embeddings
+                # This bypasses the embedding step in LangChain
+                self.vectorstore._collection.add(
+                    ids=validated_ids,
+                    embeddings=embeddings_list,
+                    documents=validated_texts,
+                    metadatas=validated_metadatas
+                )
+                
+                successful_ids = validated_ids
+                failed_count = 0
+                
+            except Exception as e:
+                error_str = str(e)
+                logger.error(f"Error adding documents with smart batching: {e}")
+                
+                # Check for API limits or quota errors
+                if "limit: 0" in error_str or "free_tier" in error_str.lower() or "quota" in error_str.lower():
+                    raise ValueError(
+                        "❌ **OpenAI Embedding API Error**\n\n"
+                        "The OpenAI API has rate limits or quota restrictions.\n\n"
+                        "**Solutions:**\n"
+                        "1. 💳 **Check your OpenAI account** - Verify you have credits\n"
+                        "2. ⏱️ **Wait a moment** - Try again after a brief delay\n"
+                        "3. 🔑 **Verify API key** - Ensure OPENAI_API_KEY is correct in .env"
+                    ) from e
+                raise
             
             # Check if we have any successful additions
             if not successful_ids:
