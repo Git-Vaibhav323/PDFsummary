@@ -1,11 +1,12 @@
 """
-Lightweight memory system for conversation context.
+Lightweight memory system for conversation context with session support.
 
 Key principles:
-- Single global chat history
+- Session-scoped chat history
 - Used ONLY for follow-up question resolution
 - NOT embedded or stored in vector database
 - Fast clear_memory() function
+- Token-safe truncation
 """
 import logging
 from typing import List, Dict, Optional
@@ -43,22 +44,26 @@ class Message:
 
 
 class ConversationMemory:
-    """Lightweight, fast conversation memory system."""
+    """Lightweight, fast conversation memory system with token-safe truncation."""
     
-    def __init__(self, max_history: int = 20):
+    def __init__(self, max_history: int = 20, max_tokens: int = 4000, session_id: Optional[str] = None):
         """
         Initialize conversation memory.
         
         Args:
             max_history: Maximum number of messages to keep in memory
+            max_tokens: Maximum tokens to keep (approximate)
+            session_id: Optional session ID for scoping
         """
         self.messages: List[Message] = []
         self.max_history = max_history
+        self.max_tokens = max_tokens
+        self.session_id = session_id
         self.created_at = datetime.utcnow().isoformat()
     
     def add_message(self, role: str, content: str, metadata: Optional[Dict] = None):
         """
-        Add message to memory.
+        Add message to memory with token-safe truncation.
         
         Args:
             role: 'user' or 'assistant'
@@ -68,11 +73,22 @@ class ConversationMemory:
         message = Message(role, content, metadata)
         self.messages.append(message)
         
-        # Keep only last N messages
+        # Truncate based on message count
         if len(self.messages) > self.max_history:
             self.messages = self.messages[-self.max_history:]
         
-        logger.debug(f"Added {role} message. Memory now has {len(self.messages)} messages")
+        # Truncate based on token count (approximate: 1 token ≈ 4 chars)
+        total_chars = sum(len(msg.content) for msg in self.messages)
+        total_tokens = total_chars // 4
+        
+        if total_tokens > self.max_tokens:
+            # Remove oldest messages until under token limit
+            while total_tokens > self.max_tokens and len(self.messages) > 2:
+                removed = self.messages.pop(0)
+                total_chars -= len(removed.content)
+                total_tokens = total_chars // 4
+        
+        logger.debug(f"Added {role} message. Memory now has {len(self.messages)} messages (~{total_tokens} tokens)")
     
     def get_history(self) -> List[Dict]:
         """
@@ -95,23 +111,32 @@ class ConversationMemory:
         """
         return [msg.to_dict() for msg in self.messages[-n:]]
     
-    def get_context_for_question_rewriting(self) -> str:
+    def get_context_for_question_rewriting(self, max_turns: int = 10) -> str:
         """
-        Get context string for question rewriting.
+        Get context string for question rewriting with last N turns.
         
         Used ONLY to resolve references in follow-up questions.
         
+        Args:
+            max_turns: Maximum number of turns (user+assistant pairs) to include
+            
         Returns:
             Formatted context string
         """
         if not self.messages:
             return ""
         
-        # Get last few exchanges (user-assistant pairs)
+        # Get last N turns (user-assistant pairs)
+        # Each turn = 2 messages (user + assistant)
+        num_messages = min(len(self.messages), max_turns * 2)
+        recent_messages = self.messages[-num_messages:]
+        
         context_lines = []
-        for msg in self.messages[-4:]:  # Last 2 exchanges
+        for msg in recent_messages:
             role = msg.role.upper()
-            context_lines.append(f"{role}: {msg.content[:200]}")  # Truncate for clarity
+            # Truncate long messages but keep essential context
+            content = msg.content[:300] if len(msg.content) > 300 else msg.content
+            context_lines.append(f"{role}: {content}")
         
         return "\n".join(context_lines)
     
@@ -129,83 +154,141 @@ class ConversationMemory:
         return f"ConversationMemory({len(self.messages)} messages)"
 
 
-class GlobalMemoryManager:
+class SessionMemoryManager:
     """
-    Global manager for conversation memory.
+    Session-scoped memory manager for conversation memory.
     
-    Maintains a single memory instance for the application.
+    Maintains per-session memory instances.
     """
     
-    _instance: Optional[ConversationMemory] = None
+    _instances: Dict[str, ConversationMemory] = {}
+    _default_session_id: str = "default"
     
     @classmethod
-    def get_memory(cls) -> ConversationMemory:
+    def get_memory(cls, session_id: Optional[str] = None) -> ConversationMemory:
         """
-        Get or create global memory instance.
+        Get or create memory instance for a session.
         
+        Args:
+            session_id: Session ID (defaults to "default")
+            
         Returns:
-            Global ConversationMemory instance
+            ConversationMemory instance for the session
         """
-        if cls._instance is None:
-            cls._instance = ConversationMemory(max_history=20)
-            logger.info("Global memory manager initialized")
-        return cls._instance
+        sid = session_id or cls._default_session_id
+        
+        if sid not in cls._instances:
+            cls._instances[sid] = ConversationMemory(
+                max_history=20,
+                max_tokens=4000,
+                session_id=sid
+            )
+            logger.info(f"Memory initialized for session: {sid}")
+        
+        return cls._instances[sid]
+    
+    @classmethod
+    def reset_memory(cls, session_id: Optional[str] = None):
+        """Reset memory for a session."""
+        sid = session_id or cls._default_session_id
+        
+        if sid in cls._instances:
+            cls._instances[sid].clear()
+            del cls._instances[sid]
+            logger.info(f"Memory reset for session: {sid}")
+        
+        # Create new instance
+        cls._instances[sid] = ConversationMemory(
+            max_history=20,
+            max_tokens=4000,
+            session_id=sid
+        )
+    
+    @classmethod
+    def clear_memory(cls, session_id: Optional[str] = None):
+        """Clear memory for a session (fast clear)."""
+        sid = session_id or cls._default_session_id
+        
+        if sid in cls._instances:
+            cls._instances[sid].clear()
+            logger.info(f"Memory cleared for session: {sid}")
+        else:
+            logger.warning(f"No memory to clear for session: {sid}")
+    
+    @classmethod
+    def clear_all_sessions(cls):
+        """Clear all session memories."""
+        cls._instances.clear()
+        logger.info("All session memories cleared")
+
+
+# Backward compatibility: GlobalMemoryManager as alias
+class GlobalMemoryManager:
+    """Backward compatibility wrapper for SessionMemoryManager."""
+    
+    @classmethod
+    def get_memory(cls, session_id: Optional[str] = None) -> ConversationMemory:
+        """Get memory for default session."""
+        return SessionMemoryManager.get_memory(session_id)
     
     @classmethod
     def reset_memory(cls):
-        """Reset to create new memory instance."""
-        if cls._instance:
-            cls._instance.clear()
-        cls._instance = ConversationMemory(max_history=20)
-        logger.info("Global memory reset")
+        """Reset default session memory."""
+        SessionMemoryManager.reset_memory()
     
     @classmethod
     def clear_memory(cls):
-        """Clear all memory (fast clear)."""
-        if cls._instance:
-            cls._instance.clear()
-        else:
-            logger.warning("No memory to clear")
+        """Clear default session memory."""
+        SessionMemoryManager.clear_memory()
 
 
-def get_global_memory() -> ConversationMemory:
+def get_global_memory(session_id: Optional[str] = None) -> ConversationMemory:
     """
-    Convenience function to get global memory.
+    Convenience function to get memory for a session.
+    
+    Args:
+        session_id: Optional session ID (defaults to "default")
     
     Returns:
-        Global ConversationMemory instance
+        ConversationMemory instance for the session
     """
-    return GlobalMemoryManager.get_memory()
+    return SessionMemoryManager.get_memory(session_id)
 
 
-def clear_memory():
+def clear_memory(session_id: Optional[str] = None):
     """
-    Clear all conversation memory instantly.
+    Clear conversation memory for a session.
     
-    Clears the global chat history completely.
+    Args:
+        session_id: Optional session ID (defaults to "default")
     """
-    GlobalMemoryManager.clear_memory()
+    SessionMemoryManager.clear_memory(session_id)
 
 
-def add_to_memory(role: str, content: str, metadata: Optional[Dict] = None):
+def add_to_memory(role: str, content: str, metadata: Optional[Dict] = None, session_id: Optional[str] = None):
     """
-    Add message to global memory.
+    Add message to session memory.
     
     Args:
         role: 'user' or 'assistant'
         content: Message text
         metadata: Optional metadata
+        session_id: Optional session ID (defaults to "default")
     """
-    memory = get_global_memory()
+    memory = get_global_memory(session_id)
     memory.add_message(role, content, metadata)
 
 
-def get_memory_context() -> str:
+def get_memory_context(session_id: Optional[str] = None, max_turns: int = 10) -> str:
     """
     Get memory context for question rewriting.
     
+    Args:
+        session_id: Optional session ID (defaults to "default")
+        max_turns: Maximum number of turns to include
+        
     Returns:
         Formatted context for resolving references
     """
-    memory = get_global_memory()
-    return memory.get_context_for_question_rewriting()
+    memory = get_global_memory(session_id)
+    return memory.get_context_for_question_rewriting(max_turns=max_turns)

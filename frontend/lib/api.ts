@@ -21,7 +21,7 @@ const api = axios.create({
   headers: {
     "Content-Type": "application/json",
   },
-  timeout: 600000, // 10 minutes timeout for large file uploads and processing
+  timeout: 420000, // 7 minutes timeout (backend is 6 minutes, add 1 min buffer)
 });
 
 // Add request interceptor to log API calls
@@ -92,11 +92,16 @@ export interface ChatResponse {
     error?: string;
   } | null;
   conversation_id?: string;
+  web_search_used?: boolean;  // Whether web search was used
+  web_search_source?: string;  // "user_requested" or "auto_triggered"
 }
 
 export interface ChatRequest {
   question: string;
   conversation_id?: string;
+  session_id?: string;
+  document_ids?: string[];
+  use_web_search?: boolean;  // User-controlled web search toggle
 }
 
 export interface Conversation {
@@ -133,7 +138,7 @@ export const apiClient = {
         headers: {
           "Content-Type": "multipart/form-data",
         },
-        timeout: 600000, // 10 minutes for large file uploads and processing
+        timeout: 420000, // 7 minutes for large file uploads and processing
       });
       console.log("Upload successful:", response.data);
       // Backend returns message, pages, chunks, document_ids - add success flag
@@ -212,11 +217,20 @@ export const apiClient = {
   /**
    * Send chat message
    */
-  async sendMessage(question: string, conversationId?: string): Promise<ChatResponse> {
+  async sendMessage(
+    question: string,
+    conversationId?: string,
+    sessionId?: string,
+    documentIds?: string[],
+    useWebSearch?: boolean
+  ): Promise<ChatResponse> {
     try {
       const response = await api.post<ChatResponse>("/chat", {
         question,
         conversation_id: conversationId,
+        session_id: sessionId,
+        document_ids: documentIds,
+        use_web_search: useWebSearch,
       });
       return response.data;
     } catch (error: any) {
@@ -320,6 +334,220 @@ export const apiClient = {
           error.response?.data?.message ||
           error.message ||
           "Failed to remove file",
+      };
+    }
+  },
+
+  /**
+   * List all uploaded documents
+   */
+  async listDocuments(): Promise<{ documents: any[] }> {
+    try {
+      const response = await api.get<{ documents: any[] }>("/documents");
+      return response.data;
+    } catch (error: any) {
+      throw new Error(
+        error.response?.data?.detail ||
+          error.message ||
+          "Failed to list documents"
+      );
+    }
+  },
+
+  /**
+   * Get document metadata
+   */
+  async getDocument(documentId: string): Promise<any> {
+    try {
+      const response = await api.get<any>(`/documents/${documentId}`);
+      return response.data;
+    } catch (error: any) {
+      throw new Error(
+        error.response?.data?.detail ||
+          error.message ||
+          "Failed to get document"
+      );
+    }
+  },
+
+  /**
+   * Delete a document
+   */
+  async deleteDocument(documentId: string): Promise<{ success: boolean; message?: string }> {
+    try {
+      const response = await api.delete<{ message: string; success: boolean }>(`/documents/${documentId}`);
+      return {
+        success: true,
+        message: response.data.message,
+      };
+    } catch (error: any) {
+      return {
+        success: false,
+        message:
+          error.response?.data?.detail ||
+          error.message ||
+          "Failed to delete document",
+      };
+    }
+  },
+
+  /**
+   * Clear all documents
+   */
+  async clearAllDocuments(): Promise<{ success: boolean; message?: string }> {
+    try {
+      const response = await api.delete<{ message: string; success: boolean }>("/documents");
+      return {
+        success: true,
+        message: response.data.message,
+      };
+    } catch (error: any) {
+      return {
+        success: false,
+        message:
+          error.response?.data?.detail ||
+          error.message ||
+          "Failed to clear documents",
+      };
+    }
+  },
+
+  /**
+   * Clear conversation memory (legacy - clears all memory)
+   */
+  async clearMemory(): Promise<{ success: boolean; message?: string }> {
+    try {
+      const response = await api.delete<{ message: string; success: boolean }>("/clear_memory");
+      return {
+        success: true,
+        message: response.data.message,
+      };
+    } catch (error: any) {
+      return {
+        success: false,
+        message:
+          error.response?.data?.detail ||
+          error.message ||
+          "Failed to clear memory",
+      };
+    }
+  },
+
+  /**
+   * Clear messages from a specific conversation (keeps conversation, clears messages)
+   */
+  async clearConversationMessages(conversationId: string): Promise<{ success: boolean; message?: string }> {
+    try {
+      const response = await api.delete<{ message: string; success: boolean }>(
+        `/conversations/${conversationId}/messages`
+      );
+      return {
+        success: true,
+        message: response.data.message,
+      };
+    } catch (error: any) {
+      return {
+        success: false,
+        message:
+          error.response?.data?.detail ||
+          error.message ||
+          "Failed to clear conversation messages",
+      };
+    }
+  },
+
+  /**
+   * Generate financial dashboard (replaces Financial Agent)
+   */
+  async generateFinancialDashboard(
+    documentIds: string[],
+    companyName?: string
+  ): Promise<any> {
+    try {
+      const response = await api.post<any>("/financial_dashboard/generate", {
+        document_ids: documentIds,
+        company_name: companyName,
+      });
+      return response.data;
+    } catch (error: any) {
+      throw new Error(
+        error.response?.data?.detail ||
+          error.message ||
+          "Failed to generate financial dashboard"
+      );
+    }
+  },
+
+  /**
+   * Get financial agent questions (DEPRECATED)
+   */
+  async getFinancialQuestions(): Promise<{ questions: any[] }> {
+    try {
+      const response = await api.get<{ questions: any[] }>("/financial_agent/questions");
+      return response.data;
+    } catch (error: any) {
+      throw new Error(
+        error.response?.data?.detail ||
+          error.message ||
+          "Failed to get financial questions"
+      );
+    }
+  },
+
+  /**
+   * Get financial agent state
+   */
+  async getFinancialAgentState(): Promise<any> {
+    try {
+      const response = await api.get<any>("/financial_agent/state");
+      return response.data;
+    } catch (error: any) {
+      throw new Error(
+        error.response?.data?.detail ||
+          error.message ||
+          "Failed to get financial agent state"
+      );
+    }
+  },
+
+  /**
+   * Set financial agent documents
+   */
+  async setFinancialAgentDocuments(documentIds: string[]): Promise<{ success: boolean; message?: string }> {
+    try {
+      const response = await api.post<{ message: string; success: boolean }>("/financial_agent/documents", documentIds);
+      return {
+        success: true,
+        message: response.data.message,
+      };
+    } catch (error: any) {
+      return {
+        success: false,
+        message:
+          error.response?.data?.detail ||
+          error.message ||
+          "Failed to set financial agent documents",
+      };
+    }
+  },
+
+  /**
+   * Clear financial agent cache
+   */
+  async clearFinancialAgentCache(): Promise<{ success: boolean; message?: string }> {
+    try {
+      const response = await api.delete<{ message: string; success: boolean }>("/financial_agent/cache");
+      return {
+        success: true,
+        message: response.data.message,
+      };
+    } catch (error: any) {
+      return {
+        success: false,
+        message:
+          error.response?.data?.detail ||
+          error.message ||
+          "Failed to clear financial agent cache",
       };
     }
   },

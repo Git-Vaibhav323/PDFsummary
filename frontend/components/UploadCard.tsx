@@ -8,7 +8,7 @@ import { formatFileSize } from "@/lib/utils";
 import { apiClient } from "@/lib/api";
 
 interface UploadCardProps {
-  onUploadSuccess: (fileName?: string, fileSize?: number) => void;
+  onUploadSuccess: (fileName?: string, fileSize?: number, documentId?: string) => void;
   onUploadError: (error: string) => void;
 }
 
@@ -97,10 +97,11 @@ export default function UploadCard({
         setTimeout(() => {
           const fileName = file.name;
           const fileSize = file.size;
+          const documentId = (result as any).document_id; // Get document ID from response
           setFile(null);
           setUploadProgress(0);
           setIsUploading(false);
-          onUploadSuccess(fileName, fileSize);
+          onUploadSuccess(fileName, fileSize, documentId);
         }, 500);
       } else {
         console.error("[UploadCard] Upload failed:", result.error);
@@ -128,10 +129,10 @@ export default function UploadCard({
   }, []);
 
   return (
-    <Card className="border-border/50 bg-card/50 shadow-sm">
+    <Card className="border-[#E5E7EB] bg-white shadow-sm">
       <CardHeader className="pb-4">
-        <CardTitle className="text-base font-semibold">Upload PDF</CardTitle>
-        <CardDescription className="text-xs">
+        <CardTitle className="text-base font-semibold text-[#111827]">Upload PDF</CardTitle>
+        <CardDescription className="text-xs text-[#6B7280]">
           Upload a PDF document to start asking questions
         </CardDescription>
       </CardHeader>
@@ -143,8 +144,8 @@ export default function UploadCard({
           onDrop={handleDrop}
           className={`relative flex flex-col items-center justify-center rounded-xl border-2 border-dashed p-8 transition-all duration-200 ${
             isDragging
-              ? "border-primary/50 bg-primary/5 shadow-md"
-              : "border-border/50 bg-muted/20 hover:border-border hover:bg-muted/30"
+              ? "border-[#2563EB] bg-[#DBEAFE] shadow-md"
+              : "border-[#E5E7EB] bg-[#F8FAFC] hover:border-[#2563EB] hover:bg-[#F3F4F6]"
           }`}
         >
           <input
@@ -157,29 +158,30 @@ export default function UploadCard({
 
           {!file ? (
             <>
-              <Upload className="mb-4 h-12 w-12 text-muted-foreground" />
-              <p className="mb-2 text-sm font-medium">
+              <Upload className="mb-4 h-12 w-12 text-[#6B7280]" />
+              <p className="mb-2 text-sm font-medium text-[#111827]">
                 Drag and drop your PDF here
               </p>
-              <p className="mb-4 text-xs text-muted-foreground">
+              <p className="mb-4 text-xs text-[#6B7280]">
                 or click to browse
               </p>
               <Button
                 variant="outline"
                 size="sm"
                 onClick={() => fileInputRef.current?.click()}
+                className="border-[#2563EB] text-[#2563EB] hover:bg-[#2563EB] hover:text-white font-semibold"
               >
                 Browse Files
               </Button>
             </>
           ) : (
             <div className="flex w-full items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10">
-                <FileText className="h-5 w-5 text-primary" />
+              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-[#DBEAFE]">
+                <FileText className="h-5 w-5 text-[#2563EB]" />
               </div>
               <div className="flex-1">
-                <p className="text-sm font-medium">{file.name}</p>
-                <p className="text-xs text-muted-foreground">
+                <p className="text-sm font-medium text-[#111827]">{file.name}</p>
+                <p className="text-xs text-[#6B7280]">
                   {formatFileSize(file.size)}
                 </p>
               </div>
@@ -188,6 +190,7 @@ export default function UploadCard({
                 size="icon"
                 onClick={handleRemoveFile}
                 disabled={isUploading}
+                className="hover:bg-[#FEE2E2] hover:text-[#DC2626]"
               >
                 <X className="h-4 w-4" />
               </Button>
@@ -199,12 +202,12 @@ export default function UploadCard({
         {isUploading && (
           <div className="space-y-2">
             <div className="flex items-center justify-between text-xs">
-              <span className="text-muted-foreground">Uploading...</span>
-              <span className="text-muted-foreground">{uploadProgress}%</span>
+              <span className="text-[#6B7280]">Uploading...</span>
+              <span className="text-[#6B7280]">{uploadProgress}%</span>
             </div>
-            <div className="h-2 w-full overflow-hidden rounded-full bg-secondary">
+            <div className="h-2 w-full overflow-hidden rounded-full bg-[#E5E7EB]">
               <div
-                className="h-full bg-primary transition-all duration-300"
+                className="h-full bg-[#2563EB] transition-all duration-300"
                 style={{ width: `${uploadProgress}%` }}
               />
             </div>
@@ -213,7 +216,7 @@ export default function UploadCard({
 
         {/* Process Button */}
         <Button
-          className="w-full font-semibold shadow-md hover:shadow-lg transition-shadow"
+          className="w-full font-semibold shadow-md hover:shadow-lg transition-shadow bg-[#16A34A] hover:bg-[#15803D] text-white"
           onClick={handleProcessPDF}
           disabled={!file || isUploading}
           size="lg"

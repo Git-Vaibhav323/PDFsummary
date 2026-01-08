@@ -2,6 +2,13 @@
 
 import { useState, useRef, useImperativeHandle, forwardRef, useEffect } from "react";
 import { ChevronDown, ChevronUp } from "lucide-react";
+import dynamic from "next/dynamic";
+
+// Dynamically import SimpleChart to avoid SSR issues
+const SimpleChart = dynamic(() => import("./SimpleChart"), {
+  ssr: false,
+  loading: () => <div className="animate-pulse bg-muted/30 h-64 rounded-lg" />,
+});
 
 interface FAQItem {
   id: number;
@@ -11,10 +18,29 @@ interface FAQItem {
   isLoading?: boolean;
 }
 
+interface FAQAnswerData {
+  answer: string;
+  visualization?: string | {
+    image_base64?: string;
+    markdown?: string;
+    chart_type?: string;
+    type?: string;
+    title?: string;
+    labels?: string[];
+    values?: number[];
+    xAxis?: string;
+    yAxis?: string;
+    headers?: string[];
+    rows?: string[][];
+    error?: string;
+  } | null;
+}
+
 interface FAQAccordionProps {
   onQuestionClick: (question: string) => void;
   onAllAnswered?: (completed: boolean) => void;
   onClose?: () => void;
+  initialAnswers?: { [key: number]: FAQAnswerData }; // For restoring answers when reopened
 }
 
 const FAQ_QUESTIONS = [
@@ -31,27 +57,34 @@ const FAQ_QUESTIONS = [
 ];
 
 const FAQAccordion = forwardRef<any, FAQAccordionProps>(
-  ({ onQuestionClick, onAllAnswered, onClose }, ref) => {
+  ({ onQuestionClick, onAllAnswered, onClose, initialAnswers = {} }, ref) => {
     const [expandedId, setExpandedId] = useState<number | null>(null);
-    const [answers, setAnswers] = useState<{ [key: number]: string }>({});
+    const [answers, setAnswers] = useState<{ [key: number]: FAQAnswerData }>(initialAnswers);
+    
+    // Update answers when initialAnswers prop changes (when reopening Finance Agent)
+    useEffect(() => {
+      if (Object.keys(initialAnswers).length > 0) {
+        setAnswers(initialAnswers);
+      }
+    }, [initialAnswers]);
 
     // Check if all questions are answered
-    const allAnswered = FAQ_QUESTIONS.every((faq) => answers[faq.id]);
+    const allAnswered = FAQ_QUESTIONS.every((faq) => answers[faq.id]?.answer);
 
     useEffect(() => {
       onAllAnswered?.(allAnswered);
     }, [allAnswered, onAllAnswered]);
 
     useImperativeHandle(ref, () => ({
-      setAnswer: (id: number, answer: string) => {
-        setAnswers((prev) => ({ ...prev, [id]: answer }));
+      setAnswer: (id: number, answer: string, visualization?: FAQAnswerData['visualization']) => {
+        setAnswers((prev) => ({ ...prev, [id]: { answer, visualization } }));
       },
     }));
 
     const handleQuestionClick = (question: string, id: number) => {
       setExpandedId(id);
       // Only send to backend if we don't have answer yet
-      if (!answers[id]) {
+      if (!answers[id]?.answer) {
         onQuestionClick(question);
       }
     };
@@ -81,7 +114,7 @@ const FAQAccordion = forwardRef<any, FAQAccordionProps>(
                   <div className="font-semibold text-sm text-foreground">
                     {faq.id}. {faq.title}
                   </div>
-                  {!answers[faq.id] && (
+                  {!answers[faq.id]?.answer && (
                     <div className="text-xs text-muted-foreground mt-1 line-clamp-1">
                       {faq.question}
                     </div>
@@ -96,20 +129,117 @@ const FAQAccordion = forwardRef<any, FAQAccordionProps>(
                 </div>
               </button>
 
-              {expandedId === faq.id && answers[faq.id] && (
+              {expandedId === faq.id && answers[faq.id]?.answer && (
                 <div className="px-4 py-3 bg-card/30 border-t border-border/20">
                   <div className="text-xs text-muted-foreground mb-3 font-semibold">Question:</div>
                   <div className="text-sm text-foreground mb-4 leading-relaxed italic">
                     {faq.question}
                   </div>
                   <div className="text-xs text-muted-foreground mb-2 font-semibold">Answer:</div>
-                  <div className="text-sm text-foreground leading-relaxed whitespace-pre-wrap max-h-[400px] overflow-y-auto scrollbar-thin">
-                    {answers[faq.id]}
+                  <div className="text-sm text-foreground leading-relaxed whitespace-pre-wrap mb-4">
+                    {answers[faq.id].answer}
                   </div>
+                  
+                  {/* Display visualization if available */}
+                  {answers[faq.id].visualization && !(answers[faq.id].visualization as any)?.error && (
+                    <div className="mt-4 rounded-xl border border-border/50 bg-card/80 p-4 shadow-md backdrop-blur-sm">
+                      {typeof answers[faq.id].visualization === 'string' ? (
+                        // Legacy format: base64 image string
+                        <img
+                          src={`data:image/png;base64,${answers[faq.id].visualization}`}
+                          alt="Chart visualization"
+                          className="max-w-full rounded-lg"
+                        />
+                      ) : (answers[faq.id].visualization as any).labels && (answers[faq.id].visualization as any).values && ((answers[faq.id].visualization as any).chart_type || (answers[faq.id].visualization as any).type) ? (
+                        // Chart format: bar, line, pie, or stacked_bar chart
+                        <SimpleChart
+                          type={((answers[faq.id].visualization as any).chart_type || (answers[faq.id].visualization as any).type) as "bar" | "line" | "pie" | "stacked_bar"}
+                          title={(answers[faq.id].visualization as any).title}
+                          labels={(answers[faq.id].visualization as any).labels}
+                          values={(answers[faq.id].visualization as any).values}
+                          groups={(answers[faq.id].visualization as any).groups}
+                          xAxis={(answers[faq.id].visualization as any).xAxis}
+                          yAxis={(answers[faq.id].visualization as any).yAxis}
+                        />
+                      ) : ((answers[faq.id].visualization as any).headers && Array.isArray((answers[faq.id].visualization as any).headers) && (answers[faq.id].visualization as any).rows && Array.isArray((answers[faq.id].visualization as any).rows) && (answers[faq.id].visualization as any).headers.length > 0 && (answers[faq.id].visualization as any).rows.length > 0) ? (
+                        // Table format: structured data
+                        <div className="w-full my-6">
+                          {(answers[faq.id].visualization as any).title && (
+                            <h3 className="text-xl font-bold mb-4 text-foreground">{(answers[faq.id].visualization as any).title}</h3>
+                          )}
+                          <div className="rounded-lg overflow-hidden shadow-xl bg-card border border-border/50">
+                            <div className="overflow-x-auto">
+                              <table className="w-full border-collapse">
+                                <thead>
+                                  <tr className="bg-muted/50">
+                                    {(answers[faq.id].visualization as any).headers.map((header: string, idx: number) => (
+                                      <th
+                                        key={idx}
+                                        className={`px-4 py-3 text-left text-sm font-semibold text-foreground border-b border-border/50 ${
+                                          idx > 0 ? 'text-right' : ''
+                                        }`}
+                                      >
+                                        {header}
+                                      </th>
+                                    ))}
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {(answers[faq.id].visualization as any).rows.map((row: any[], rowIdx: number) => (
+                                    <tr
+                                      key={rowIdx}
+                                      className={`border-b border-border/30 ${
+                                        rowIdx % 2 === 0 ? 'bg-card' : 'bg-muted/20'
+                                      }`}
+                                    >
+                                      {row.slice(0, (answers[faq.id].visualization as any).headers.length).map((cell: any, cellIdx: number) => (
+                                        <td
+                                          key={cellIdx}
+                                          className={`px-4 py-2 text-sm text-foreground ${
+                                            cellIdx > 0 ? 'text-right' : ''
+                                          }`}
+                                        >
+                                          {cell || '-'}
+                                        </td>
+                                      ))}
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          </div>
+                        </div>
+                      ) : (answers[faq.id].visualization as any).markdown ? (
+                        // Markdown table format
+                        <div className="w-full my-4">
+                          {(answers[faq.id].visualization as any).title && (
+                            <h3 className="text-lg font-semibold mb-3 text-foreground">{(answers[faq.id].visualization as any).title}</h3>
+                          )}
+                          <div className="prose prose-sm dark:prose-invert max-w-none">
+                            <pre className="whitespace-pre-wrap text-sm bg-muted/30 p-4 rounded-lg overflow-x-auto">
+                              {(answers[faq.id].visualization as any).markdown}
+                            </pre>
+                          </div>
+                        </div>
+                      ) : (answers[faq.id].visualization as any).image_base64 ? (
+                        // Base64 image format
+                        <div>
+                          {(answers[faq.id].visualization as any).title && (
+                            <h3 className="text-lg font-semibold mb-3 text-foreground">{(answers[faq.id].visualization as any).title}</h3>
+                          )}
+                          <img
+                            src={`data:image/png;base64,${(answers[faq.id].visualization as any).image_base64}`}
+                            alt={(answers[faq.id].visualization as any).title || "Chart visualization"}
+                            className="max-w-full rounded-lg"
+                          />
+                        </div>
+                      ) : null}
+                    </div>
+                  )}
                 </div>
               )}
 
-              {expandedId === faq.id && !answers[faq.id] && (
+              {expandedId === faq.id && !answers[faq.id]?.answer && (
                 <div className="px-4 py-3 bg-card/30 border-t border-border/20 text-xs text-muted-foreground italic">
                   Waiting for answer...
                 </div>

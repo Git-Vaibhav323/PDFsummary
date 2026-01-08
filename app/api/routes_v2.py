@@ -10,7 +10,7 @@ Integrates:
 import os
 import asyncio
 import logging
-from typing import Optional
+from typing import Optional, List
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -22,6 +22,9 @@ from app.config.settings import settings
 from app.rag.rag_system import get_rag_system, initialize_rag_system
 from app.rag.pdf_loader import PDFLoader
 from app.rag.memory import clear_memory, get_global_memory
+from app.database.conversations import ConversationStorage
+from app.database.documents import DocumentStorage
+from app.rag.financial_agent import FinancialAgent
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +34,8 @@ class ChatRequest(BaseModel):
     """Chat request model."""
     question: str
     conversation_id: Optional[str] = None
+    session_id: Optional[str] = None
+    document_ids: Optional[List[str]] = None  # For multi-document queries
 
 
 class ChatResponse(BaseModel):
@@ -48,6 +53,7 @@ class UploadResponse(BaseModel):
     pages: int
     chunks: int
     document_ids: int
+    document_id: Optional[str] = None  # Single document ID
 
 
 class StatusResponse(BaseModel):
@@ -140,11 +146,13 @@ async def upload_pdf(file: UploadFile = File(...)):
     """
     Upload and process a PDF file.
     
+    Supports multiple document uploads - does NOT overwrite previous documents.
+    
     Args:
         file: PDF file upload
         
     Returns:
-        Upload response with processing details
+        Upload response with processing details and document ID
     """
     if not file.filename.endswith('.pdf'):
         raise HTTPException(status_code=400, detail="File must be a PDF")
@@ -176,7 +184,7 @@ async def upload_pdf(file: UploadFile = File(...)):
         import uuid
         document_id = str(uuid.uuid4())
         
-        # Ingest document asynchronously
+        # Ingest document asynchronously (adds to existing documents, doesn't overwrite)
         result = await rag_system.ingest_document_async(
             document_id=document_id,
             pages=pages,
@@ -203,7 +211,8 @@ async def upload_pdf(file: UploadFile = File(...)):
             message="PDF uploaded and processed successfully",
             pages=total_pages,
             chunks=chunks_processed,
-            document_ids=documents_indexed
+            document_ids=documents_indexed,
+            document_id=document_id
         )
     
     except HTTPException:
@@ -218,10 +227,16 @@ async def upload_pdf(file: UploadFile = File(...)):
 @app.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
     """
-    Chat with the PDF using RAG.
+    Chat with the PDF using RAG with conversational context.
+    
+    Supports:
+    - Session-based memory
+    - Multi-document queries
+    - Conversation persistence
+    - Follow-up question resolution
     
     Args:
-        request: Chat request with question
+        request: Chat request with question, optional conversation_id, session_id, document_ids
         
     Returns:
         Chat response with answer and optional visualizations
@@ -233,10 +248,15 @@ async def chat(request: ChatRequest):
         # Get RAG system
         rag_system = get_rag_system()
         
-        # Process question
+        # Use conversation_id as session_id if session_id not provided
+        session_id = request.session_id or request.conversation_id
+        
+        # Process question with session and document filtering
         result = rag_system.answer_question(
             question=request.question,
-            use_memory=True
+            use_memory=True,
+            session_id=session_id,
+            document_ids=request.document_ids
         )
         
         if not result.get("success"):
@@ -247,6 +267,33 @@ async def chat(request: ChatRequest):
         
         response = result.get("response", {})
         
+        # Persist to conversation if conversation_id provided
+        conversation_id = request.conversation_id
+        if conversation_id:
+            try:
+                conv_storage = ConversationStorage()
+                # Add user message
+                conv_storage.add_message(
+                    conversation_id=conversation_id,
+                    role="user",
+                    content=request.question
+                )
+                # Add assistant message with visualization
+                visualization = None
+                if response.get("chart"):
+                    visualization = response.get("chart")
+                elif response.get("table"):
+                    visualization = {"type": "table", "content": response.get("table")}
+                
+                conv_storage.add_message(
+                    conversation_id=conversation_id,
+                    role="assistant",
+                    content=response.get("answer", ""),
+                    visualization=visualization
+                )
+            except Exception as e:
+                logger.warning(f"Failed to persist conversation: {e}")
+        
         logger.info(f"✅ Chat response generated: {response.get('answer')[:100]}...")
         
         return ChatResponse(
@@ -254,7 +301,7 @@ async def chat(request: ChatRequest):
             table=response.get("table"),
             chart=response.get("chart"),
             chat_history=response.get("chat_history"),
-            conversation_id=request.conversation_id
+            conversation_id=conversation_id or session_id
         )
     
     except HTTPException:
@@ -290,17 +337,19 @@ async def remove_file():
     """
     Remove uploaded document and reset vector store.
     
+    DEPRECATED: Use /documents/{document_id} DELETE instead for multi-doc support.
+    
     Returns:
         Success message
     """
     try:
         rag_system = get_rag_system()
-        rag_system.reset()
+        rag_system.reset(clear_documents=True)
         
-        logger.info("✅ Document removed and system reset")
+        logger.info("✅ All documents removed and system reset")
         
         return JSONResponse(content={
-            "message": "File removed successfully",
+            "message": "All files removed successfully",
             "success": True
         })
     except Exception as e:
@@ -338,3 +387,266 @@ async def health_check():
         "status": "healthy",
         "version": "2.0.0"
     }
+
+
+# Document Management Endpoints
+@app.get("/documents")
+async def list_documents():
+    """
+    List all uploaded documents.
+    
+    Returns:
+        List of document metadata
+    """
+    try:
+        rag_system = get_rag_system()
+        documents = rag_system.list_documents()
+        return {"documents": documents}
+    except Exception as e:
+        logger.error(f"Error listing documents: {e}")
+        raise HTTPException(status_code=500, detail=f"Error listing documents: {str(e)}")
+
+
+@app.get("/documents/{document_id}")
+async def get_document(document_id: str):
+    """
+    Get document metadata.
+    
+    Args:
+        document_id: Document ID
+        
+    Returns:
+        Document metadata
+    """
+    try:
+        rag_system = get_rag_system()
+        if rag_system.document_storage:
+            document = rag_system.document_storage.get_document(document_id)
+            if not document:
+                raise HTTPException(status_code=404, detail="Document not found")
+            return document
+        raise HTTPException(status_code=500, detail="Document storage not available")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting document: {e}")
+        raise HTTPException(status_code=500, detail=f"Error getting document: {str(e)}")
+
+
+@app.delete("/documents/{document_id}")
+async def delete_document(document_id: str):
+    """
+    Delete a document.
+    
+    Args:
+        document_id: Document ID to delete
+        
+    Returns:
+        Success message
+    """
+    try:
+        rag_system = get_rag_system()
+        success = rag_system.delete_document(document_id)
+        if not success:
+            raise HTTPException(status_code=404, detail="Document not found")
+        
+        return JSONResponse(content={
+            "message": f"Document {document_id} deleted successfully",
+            "success": True
+        })
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting document: {e}")
+        raise HTTPException(status_code=500, detail=f"Error deleting document: {str(e)}")
+
+
+@app.delete("/documents")
+async def clear_all_documents():
+    """
+    Clear all documents (use with caution).
+    
+    Returns:
+        Success message
+    """
+    try:
+        rag_system = get_rag_system()
+        rag_system.reset(clear_documents=True)
+        
+        return JSONResponse(content={
+            "message": "All documents cleared successfully",
+            "success": True
+        })
+    except Exception as e:
+        logger.error(f"Error clearing documents: {e}")
+        raise HTTPException(status_code=500, detail=f"Error clearing documents: {str(e)}")
+
+
+# Conversation Endpoints
+@app.post("/conversations")
+async def create_conversation(title: Optional[str] = None):
+    """
+    Create a new conversation.
+    
+    Args:
+        title: Optional conversation title
+        
+    Returns:
+        Created conversation details
+    """
+    try:
+        conv_storage = ConversationStorage()
+        conversation = conv_storage.create_conversation(title=title)
+        return conversation
+    except Exception as e:
+        logger.error(f"Error creating conversation: {e}")
+        raise HTTPException(status_code=500, detail=f"Error creating conversation: {str(e)}")
+
+
+@app.get("/conversations")
+async def list_conversations(limit: int = 50):
+    """
+    List all conversations.
+    
+    Args:
+        limit: Maximum number of conversations to return
+        
+    Returns:
+        List of conversations
+    """
+    try:
+        conv_storage = ConversationStorage()
+        conversations = conv_storage.list_conversations(limit=limit)
+        return {"conversations": conversations}
+    except Exception as e:
+        logger.error(f"Error listing conversations: {e}")
+        raise HTTPException(status_code=500, detail=f"Error listing conversations: {str(e)}")
+
+
+@app.get("/conversations/{conversation_id}")
+async def get_conversation(conversation_id: str):
+    """
+    Get conversation with messages.
+    
+    Args:
+        conversation_id: Conversation ID
+        
+    Returns:
+        Conversation details with messages
+    """
+    try:
+        conv_storage = ConversationStorage()
+        conversation = conv_storage.get_conversation(conversation_id)
+        if not conversation:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+        return conversation
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting conversation: {e}")
+        raise HTTPException(status_code=500, detail=f"Error getting conversation: {str(e)}")
+
+
+@app.delete("/conversations/{conversation_id}")
+async def delete_conversation(conversation_id: str):
+    """
+    Delete a conversation.
+    
+    Args:
+        conversation_id: Conversation ID
+        
+    Returns:
+        Success message
+    """
+    try:
+        conv_storage = ConversationStorage()
+        success = conv_storage.delete_conversation(conversation_id)
+        if not success:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+        
+        return JSONResponse(content={
+            "message": f"Conversation {conversation_id} deleted successfully",
+            "success": True
+        })
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting conversation: {e}")
+        raise HTTPException(status_code=500, detail=f"Error deleting conversation: {str(e)}")
+
+
+# Financial Agent Endpoints
+@app.get("/financial_agent/questions")
+async def get_financial_questions():
+    """
+    Get all financial agent questions.
+    
+    Returns:
+        List of financial questions
+    """
+    try:
+        agent = FinancialAgent()
+        questions = agent.get_questions()
+        return {"questions": questions}
+    except Exception as e:
+        logger.error(f"Error getting financial questions: {e}")
+        raise HTTPException(status_code=500, detail=f"Error getting financial questions: {str(e)}")
+
+
+@app.get("/financial_agent/state")
+async def get_financial_agent_state():
+    """
+    Get financial agent state.
+    
+    Returns:
+        Financial agent state summary
+    """
+    try:
+        agent = FinancialAgent()
+        return agent.get_state_summary()
+    except Exception as e:
+        logger.error(f"Error getting financial agent state: {e}")
+        raise HTTPException(status_code=500, detail=f"Error getting financial agent state: {str(e)}")
+
+
+@app.post("/financial_agent/documents")
+async def set_financial_agent_documents(document_ids: List[str]):
+    """
+    Set selected documents for financial agent.
+    
+    Args:
+        document_ids: List of document IDs
+        
+    Returns:
+        Success message
+    """
+    try:
+        agent = FinancialAgent()
+        agent.set_selected_documents(document_ids)
+        return JSONResponse(content={
+            "message": "Documents set successfully",
+            "success": True
+        })
+    except Exception as e:
+        logger.error(f"Error setting financial agent documents: {e}")
+        raise HTTPException(status_code=500, detail=f"Error setting financial agent documents: {str(e)}")
+
+
+@app.delete("/financial_agent/cache")
+async def clear_financial_agent_cache():
+    """
+    Clear financial agent cache.
+    
+    Returns:
+        Success message
+    """
+    try:
+        agent = FinancialAgent()
+        agent.clear_cache()
+        return JSONResponse(content={
+            "message": "Financial agent cache cleared successfully",
+            "success": True
+        })
+    except Exception as e:
+        logger.error(f"Error clearing financial agent cache: {e}")
+        raise HTTPException(status_code=500, detail=f"Error clearing financial agent cache: {str(e)}")

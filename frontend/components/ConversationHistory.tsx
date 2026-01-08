@@ -11,6 +11,7 @@ interface ConversationHistoryProps {
   onSelectConversation: (conversationId: string) => void;
   onNewConversation: () => void;
   isPDFLoaded: boolean;
+  refreshTrigger?: number; // Optional trigger to refresh list
 }
 
 export default function ConversationHistory({
@@ -18,21 +19,28 @@ export default function ConversationHistory({
   onSelectConversation,
   onNewConversation,
   isPDFLoaded,
+  refreshTrigger,
 }: ConversationHistoryProps) {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isDeleting, setIsDeleting] = useState<string | null>(null);
+  const [lastUpdateTime, setLastUpdateTime] = useState<number>(Date.now());
 
-  const loadConversations = async () => {
+  const loadConversations = async (force = false) => {
     if (!isPDFLoaded) {
       setConversations([]);
       return;
     }
     
-    setIsLoading(true);
+    // Only show loading if forced or first load
+    if (force || conversations.length === 0) {
+      setIsLoading(true);
+    }
+    
     try {
       const data = await apiClient.listConversations(50);
       setConversations(data);
+      setLastUpdateTime(Date.now());
     } catch (error) {
       console.error("Failed to load conversations:", error);
     } finally {
@@ -40,12 +48,23 @@ export default function ConversationHistory({
     }
   };
 
+  // Load conversations on mount and when PDF is loaded
   useEffect(() => {
-    loadConversations();
-    // Refresh conversations every 5 seconds
-    const interval = setInterval(loadConversations, 5000);
-    return () => clearInterval(interval);
+    if (isPDFLoaded) {
+      loadConversations(true);
+    } else {
+      setConversations([]);
+    }
   }, [isPDFLoaded]);
+
+  // Refresh when refreshTrigger changes (e.g., after new message)
+  useEffect(() => {
+    if (refreshTrigger && refreshTrigger > 0 && isPDFLoaded) {
+      loadConversations(false); // Silent refresh
+    }
+  }, [refreshTrigger, isPDFLoaded]);
+
+
 
   const handleDelete = async (conversationId: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -78,9 +97,9 @@ export default function ConversationHistory({
             Conversations
           </h2>
         </div>
-        <Card className="border-border/50 bg-card/50 shadow-sm">
+        <Card className="border-[#E5E7EB] bg-white shadow-sm">
           <div className="p-4 text-center">
-            <p className="text-xs text-muted-foreground">
+            <p className="text-xs text-[#6B7280]">
               Upload a PDF to start conversations
             </p>
           </div>
@@ -111,7 +130,7 @@ export default function ConversationHistory({
 
       <Button
         variant="outline"
-        className="w-full justify-start border-border/50 bg-card/50 hover:bg-card hover:border-border"
+        className="w-full justify-start border-[#E5E7EB] bg-white hover:bg-[#F8FAFC] hover:border-[#2563EB] text-[#111827]"
         onClick={onNewConversation}
       >
         <Plus className="mr-2 h-4 w-4" />
@@ -119,15 +138,15 @@ export default function ConversationHistory({
       </Button>
 
       {isLoading ? (
-        <Card className="border-border/50 bg-card/50 shadow-sm">
+        <Card className="border-[#E5E7EB] bg-white shadow-sm">
           <div className="p-4 text-center">
-            <Loader2 className="h-4 w-4 animate-spin mx-auto text-muted-foreground" />
+            <Loader2 className="h-4 w-4 animate-spin mx-auto text-[#2563EB]" />
           </div>
         </Card>
       ) : conversations.length === 0 ? (
-        <Card className="border-border/50 bg-card/50 shadow-sm">
+        <Card className="border-[#E5E7EB] bg-white shadow-sm">
           <div className="p-4 text-center">
-            <p className="text-xs text-muted-foreground">
+            <p className="text-xs text-[#6B7280]">
               No conversations yet
             </p>
           </div>
@@ -137,21 +156,21 @@ export default function ConversationHistory({
           {conversations.map((conversation) => (
             <Card
               key={conversation.id}
-              className={`cursor-pointer border-border/50 transition-colors ${
+              className={`cursor-pointer border-[#E5E7EB] transition-colors ${
                 currentConversationId === conversation.id
-                  ? "bg-primary/10 border-primary/50"
-                  : "bg-card/50 hover:bg-card hover:border-border"
+                  ? "bg-[#DBEAFE] border-[#2563EB]/50"
+                  : "bg-white hover:bg-[#F8FAFC] hover:border-[#2563EB]"
               }`}
               onClick={() => onSelectConversation(conversation.id)}
             >
               <div className="p-3">
                 <div className="flex items-start justify-between gap-2">
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-foreground truncate">
+                    <p className="text-sm font-medium text-[#111827] truncate">
                       {conversation.title}
                     </p>
                     <div className="flex items-center gap-2 mt-1">
-                      <p className="text-xs text-muted-foreground">
+                      <p className="text-xs text-[#6B7280]">
                         {conversation.message_count} message{conversation.message_count !== 1 ? "s" : ""}
                       </p>
                     </div>

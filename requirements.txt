@@ -46,3 +46,6 @@ mistralai>=1.0.0,<1.9.0
 # Streamlit requires protobuf<5,>=3.20, so we pin to 4.x
 protobuf>=4.21.6,<5.0.0
 
+# Web Search (Tavily API)
+tavily-python>=0.3.0,<1.0.0
+

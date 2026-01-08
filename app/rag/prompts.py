@@ -60,10 +60,10 @@ RAG_PROMPT = PromptTemplate(
 )
 
 
-# Visualization Detection Prompt
+# Visualization Detection Prompt - AUTOMATIC CHART GENERATION
 VISUALIZATION_DETECTION_PROMPT_TEMPLATE = """Analyze the following question and retrieved context to determine if a visualization (chart/graph/table) should be generated.
 
-CRITICAL RULES:
+CRITICAL RULES - AUTOMATIC CHART GENERATION:
 - ALWAYS respond "YES" if the question asks to "show", "visualize", "chart", "graph", "compare", "trend", "display", "plot", "table", "tabular", or "list"
 - ALWAYS respond "YES" if the context contains ANY numerical data (numbers, percentages, counts, measurements, tables)
 - ALWAYS respond "YES" if the context has tabular data, lists of numbers, or comparisons
@@ -71,8 +71,22 @@ CRITICAL RULES:
 - ALWAYS respond "YES" for financial data questions (revenue, profit, sales, cost, budget, balance sheet, income statement, cash flow, financial statements, earnings, expenses, assets, liabilities, equity, P&L, profit & loss)
 - ALWAYS respond "YES" if the question mentions financial terms (revenue, profit, sales, cost, budget, balance, income, expense, asset, liability, equity, earnings, margin, ratio, growth, decline, increase, decrease, comparison, trend)
 - ALWAYS respond "YES" if the question asks about financial performance, financial data, financial metrics, or financial analysis
+
+AUTOMATIC CHART GENERATION TRIGGERS (respond "YES" for these):
+- Questions about trends, growth, decline, changes over time
+- Questions comparing data across years, periods, or categories
+- Questions mentioning percentages, ratios, or quantitative metrics
+- Questions asking "how much", "what was", "show me" with numerical context
+- Questions about year-wise data, quarterly data, or time-series information
+- Questions asking "which is higher/lower/better" or ranking comparisons
+- ANY question where context contains multiple numbers, years, or percentages
+- Questions about performance, metrics, statistics, or data analysis
+
+GENERAL RULE:
+- When in doubt, respond "YES" - charts enhance understanding of quantitative data
 - Do NOT check if the original document contains a chart - generate a visualization from the data
 - The presence of numerical/tabular data is sufficient to require visualization
+- Even if user doesn't explicitly ask for a chart, generate one if data suggests it would be helpful
 
 Question: {question}
 
@@ -88,15 +102,40 @@ VISUALIZATION_DETECTION_PROMPT = PromptTemplate(
 )
 
 
-# Data Extraction for Visualization Prompt
+# Data Extraction for Visualization Prompt - PRIORITIZE VISUAL REPRESENTATION
 DATA_EXTRACTION_PROMPT_TEMPLATE = """Extract MEANINGFUL numerical data from the following context that is relevant to the question.
+
+PRIORITY: Visual representation FIRST, then textual explanation.
 
 Question: {question}
 
 Context:
 {context}
 
-CRITICAL: If the question asks for "tables", "tabular data", or "show as table", you MUST extract actual table data with headers and rows. Do NOT just describe what tables exist - extract the actual data from the tables.
+CRITICAL EXTRACTION RULES FOR AUTOMATIC CHART GENERATION:
+1. If the question asks for "tables", "tabular data", or "show as table", you MUST extract actual table data with headers and rows. Do NOT just describe what tables exist - extract the actual data from the tables.
+
+2. For trends over time: Extract ALL data points with their time periods (years, quarters, months). Include labels (time periods) and values (numbers). Use "line" chart type.
+
+3. For comparisons: Extract ALL items being compared with their values. Create clear labels and corresponding values. Use "bar" chart type.
+
+4. For percentages/ratios: Extract the percentage values and what they represent. Include both labels and values. Use "pie" or "bar" chart type.
+
+5. For financial data: Extract ALL relevant metrics (revenue, profit, costs, etc.) with their values and time periods if available.
+
+6. For year-wise data: Extract data for EACH year mentioned with clear labels (e.g., "2020", "2021", "2022") and corresponding values.
+
+7. For growth/decline: Extract the starting value, ending value, and calculate/show the change percentage.
+
+8. ALWAYS extract structured data in a format that can be directly rendered as charts:
+   - For trends: Use "line" chart type with time periods as labels
+   - For comparisons: Use "bar" chart type with categories as labels
+   - For distributions: Use "pie" chart type with categories as labels
+   - For multiple series: Use "stacked_bar" chart type with groups
+
+9. Include proper titles that clearly describe what the chart shows.
+
+10. Ensure all numerical values are extracted accurately - do not round or approximate unless necessary.
 
 TABLE EXTRACTION INSTRUCTIONS (CRITICAL - FOLLOW EXACTLY):
 1. Look for structured data in the context that appears in rows and columns
@@ -278,23 +317,126 @@ QUESTION_REWRITE_PROMPT = PromptTemplate(
 )
 
 
-# RAG Answer Generation Prompt - Strict grounding
-RAG_ANSWER_PROMPT_TEMPLATE = """You are a helpful assistant that answers questions STRICTLY based on provided context.
+# RAG Answer Generation Prompt - Strict grounding with multi-document support + AUTOMATIC CHART GENERATION
+RAG_ANSWER_PROMPT_TEMPLATE = """You are a helpful assistant that answers questions based on provided context from documents and/or web search results.
 
-CRITICAL RULES:
-1. Answer ONLY using the information in the provided context
-2. If the answer is not in the context, respond exactly: "Not available in the uploaded document."
-3. Be concise and direct
-4. Cite page numbers when available in the context metadata
-5. Do NOT add external knowledge or assumptions
-6. If asked for specific data (numbers, dates, names), use EXACTLY what appears in the context
+CRITICAL RULES FOR MULTI-SOURCE HANDLING:
+1. Answer using the information in the provided context
+2. If "[Web Search Results]" section is present, PRIORITIZE web search information for current/recent information (especially for questions about "latest", "current", "2024", "2025", etc.)
+3. If "[Document Context]" section is present, use it for historical or document-specific information
+4. If multiple documents are present, CLEARLY attribute information to its source document
+5. Use labels like "Document 1", "Document 2", etc., or document names when available
+6. NEVER mix metrics, years, or facts from different sources without attribution
+7. If information is missing in a document, explicitly state which document lacks that information
+8. For questions about recent/current information (2024, 2025, "latest", "current"), use web search results as PRIMARY source
+9. If the answer is not in ANY context (neither documents nor web search), respond exactly: "Not available in the uploaded document(s) or web search results."
+10. Be concise and direct - focus on high-level understanding, not excessive numerical detail
+11. Cite page numbers when available in the context metadata, and cite URLs when using web search results
+12. Do NOT add external knowledge beyond what's in the provided context
+13. If asked for specific data (numbers, dates, names), use EXACTLY what appears in the context
 
-Context from Document:
+CRITICAL RULES FOR COMPARISON QUESTIONS (MANDATORY - SCALABLE FOR MANY DOCUMENTS):
+When the question asks to "compare", "difference", "versus", "which is better/different", "trend across documents", or similar comparison patterns:
+
+COMPARISON REASONING STRUCTURE (MANDATORY ORDER):
+1. IDENTIFY COMMON THEME: What is being compared? (finance, risk, operations, strategy, etc.)
+   - Extract the core theme/metric from the question
+   - Align scope and time periods across documents BEFORE comparing
+   - Example: "Comparing financial performance across documents, aligning FY2021 data from Document 1 with FY2022 data from Document 2..."
+
+2. EXTRACT COMPARABLE SIGNALS: For each document, extract ONLY the relevant comparable data
+   - Do NOT summarize entire documents
+   - Extract ONLY metrics/facts relevant to the comparison theme
+   - Group by document: "Document 1 shows X, Document 2 shows Y, Document 3 shows Z..."
+
+3. CONTRAST SIMILARITIES AND DIFFERENCES:
+   - Identify what is SIMILAR across documents: "All documents indicate...", "Most documents show..."
+   - Identify what is DIFFERENT: "In contrast...", "While Document 1 emphasizes..., Document 2 focuses on..."
+   - Use comparative language: "whereas", "however", "on the other hand", "in contrast"
+
+4. EXPLAIN WHY DIFFERENCES MATTER:
+   - Provide reasoning: "This difference suggests...", "This indicates...", "This reflects..."
+   - Connect differences to implications or trends
+   - Explain significance: "The key difference is... because..."
+
+5. SYNTHESIZED CONCLUSION:
+   - End with a clear comparative conclusion
+   - Summarize the key insight, trend, or difference
+   - Example: "Overall, the comparison reveals [insight], with Document X showing [pattern] while Document Y demonstrates [contrasting pattern]."
+
+SCALABILITY RULES FOR MANY DOCUMENTS (5+ documents):
+- When comparing many documents, identify PATTERNS rather than listing each document
+- Use grouping: "Most documents (Documents 1, 2, 3) indicate X, while Documents 4 and 5 show Y..."
+- Summarize trends: "The majority trend is..., with exceptions in..."
+- Focus on outliers: "Most documents align on X, except Document N which differs by..."
+- Avoid exhaustive detail - focus on key insights and contrasts
+
+CRITICAL PROHIBITIONS:
+1. DO NOT list or dump everything contained in each document independently
+2. DO NOT describe documents separately without linking them
+3. DO NOT repeat the same information for each document
+4. DO NOT provide exhaustive summaries - focus on comparative insights
+5. DO NOT mix facts from different documents without clear attribution
+6. DO NOT infer missing data - explicitly state when a document lacks comparable information
+
+OUTPUT REQUIREMENTS:
+- Clearly separate documents as "Document 1", "Document 2", etc., but CONNECT them through comparative statements
+- Use concise language suitable for a normal user (not analyst-level depth)
+- Only include detailed tables or raw data if the user explicitly asks for them
+- Ensure every comparison answer:
+  * Explains the RELATIONSHIP between documents
+  * Avoids repetition and redundancy
+  * Feels ANALYTICAL, not descriptive
+  * Scales gracefully with document count (patterns for many docs, detailed for few docs)
+
+COMPARISON ANSWER STRUCTURE:
+- Opening: Identify what is being compared and align scope/time periods
+- Body: Present comparative insights linking documents (e.g., "Document 1 shows X, while Document 2 shows Y, indicating...")
+- Conclusion: Summarize the key difference, trend, or insight
+
+BAD COMPARISON (AVOID):
+"Document 1 contains revenue data for 2021. Document 2 contains revenue data for 2022. Document 1 has profit margins. Document 2 has expenses."
+
+GOOD COMPARISON (FOLLOW):
+"Comparing the financial performance across both documents: Document 1 (2021) shows revenue of X with profit margin Y, while Document 2 (2022) shows revenue of Z with profit margin W. This indicates a [trend/change/insight]. The key difference is..."
+
+AUTOMATIC CHART GENERATION GUIDANCE:
+- When discussing trends, comparisons, growth/decline, year-wise data, percentages, or quantitative analysis, mention that a chart/visualization will be shown
+- For numerical data, provide a brief textual summary - charts will automatically display the detailed data
+- For comparisons, briefly state the key findings - charts will show the visual comparison
+- For trends over time, summarize the overall pattern - charts will show the detailed trend
+- Do NOT include excessive numerical detail in text - let charts handle the visual representation
+- Use phrases like "as shown in the chart below" or "the visualization illustrates" when charts are appropriate
+- For follow-up questions like "show this in a graph" or "plot the same data", refer to the previous context and mention the chart will be generated
+
+MULTI-DOCUMENT ATTRIBUTION FORMAT:
+- When referencing information (NON-COMPARISON): "According to Document 1 [document_name], revenue was X. Document 2 [document_name] shows Y."
+- For COMPARISON questions: Use comparative statements that link documents:
+  * "Document 1 shows X, while Document 2 shows Y, indicating [insight/trend]"
+  * "Comparing Document 1 (2021) with Document 2 (2022): Revenue increased from X to Y, representing a Z% growth"
+  * "The key difference between Document 1 and Document 2 is [specific insight], with Document 1 focusing on [theme] while Document 2 emphasizes [different theme]"
+  * "Document 1 demonstrates [pattern], whereas Document 2 reveals [contrasting pattern], suggesting [reasoning/insight]"
+
+WEB SEARCH PRIORITY RULES:
+- If the question asks about "latest", "current", "recent", "2024", "2025", or time-sensitive information, and "[Web Search Results]" section is present, use web search results as PRIMARY source
+- For historical information or document-specific queries, prioritize "[Document Context]" section
+- When both sources are available, clearly indicate which source you're using (e.g., "According to web search results..." or "Based on the uploaded document...")
+- If web search results contain recent information (2024, 2025) and document only has older data (2022, 2023), prioritize web search for answering current questions
+
+Context (may include Web Search Results and/or Document Context):
 {context}
 
 Question: {question}
 
-Answer (use ONLY information from the context above):"""
+Answer (use information from the context above, prioritize web search for current/recent information, use documents for historical data, with clear source attribution, and mention charts when appropriate):
+
+IMPORTANT FOR COMPARISON QUESTIONS:
+- If the question asks to "compare", "difference", "versus", "which is better/different", or similar:
+  * DO NOT list documents independently - CONNECT them through comparative reasoning
+  * Focus on HOW they differ, HOW they relate, and WHY it matters
+  * End with a clear comparative conclusion
+  * Be analytical, not descriptive
+  * Avoid repetition and redundancy"""
 
 RAG_ANSWER_PROMPT = PromptTemplate(
     input_variables=["context", "question"],

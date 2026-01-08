@@ -44,14 +44,14 @@ export default function ChatWindow({
   }
 
   return (
-    <div className="flex flex-1 w-full flex-col bg-gradient-to-b from-background via-background to-muted/20 min-h-0 overflow-hidden">
+    <div className="flex flex-1 w-full flex-col bg-white min-h-0 overflow-hidden">
       <div 
-        className="flex-1 overflow-y-auto overflow-x-hidden scrollbar-thin p-8 min-h-0"
+        className="flex-1 overflow-y-auto overflow-x-hidden scrollbar-thin p-4 md:p-8 min-h-0 bg-white"
         style={{ 
           WebkitOverflowScrolling: 'touch',
         }}
       >
-        <div className="mx-auto max-w-4xl space-y-8">
+        <div className="mx-auto max-w-6xl space-y-8">
           {messages.map((message, index) => (
             <ChatMessage key={index} {...message} />
           ))}

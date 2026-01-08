@@ -246,6 +246,12 @@ class VectorStore:
         Returns:
             List of document dictionaries with text, metadata, and similarity scores
         """
+        # Initialize variables before try block to avoid UnboundLocalError
+        all_documents = []
+        all_embeddings = []
+        all_metadatas = []
+        all_ids = []
+        
         try:
             import numpy as np
             use_numpy = True

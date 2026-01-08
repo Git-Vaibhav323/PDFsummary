@@ -5,7 +5,7 @@ import { Bot } from "lucide-react";
 export default function LoadingIndicator() {
   return (
     <div className="flex gap-4 animate-fade-in">
-      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-muted to-muted/80 ring-2 ring-border/50 shadow-sm">
+      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white ring-2 ring-border/50 shadow-sm">
         <Bot className="h-4.5 w-4.5 text-foreground animate-pulse" />
       </div>
       <div className="flex flex-1 items-center">

@@ -1,28 +1,37 @@
 "use client";
 
 import { useState } from "react";
-import { Settings, Trash2, ChevronDown, ChevronUp, FileText, Activity, X } from "lucide-react";
+import { Settings, Trash2, ChevronDown, ChevronUp, FileText, Activity, X, LayoutDashboard, MessageSquare, Loader2, CheckCircle2 } from "lucide-react";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
 import UploadCard from "./UploadCard";
 import StatusBadge from "./StatusBadge";
-import FinanceAgent from "./FinanceAgent";
+import DocumentList from "./DocumentList";
 import { formatFileSize } from "@/lib/utils";
+
+type SidebarTab = "chat" | "dashboard";
 
 interface SidebarProps {
   isPDFLoaded: boolean;
   isProcessing?: boolean;
-  onUploadSuccess: (fileName?: string, fileSize?: number) => void;
+  onUploadSuccess: (fileName?: string, fileSize?: number, documentId?: string) => void;
   onUploadError: (error: string) => void;
   onClearChat: () => void;
   onRemoveFile?: () => void;
   onOpenFinanceAgent?: () => void;
-  isFinanceAgentProcessing?: boolean;
-  financeAgentProcessedCount?: number;
   messageCount: number;
   uploadedFileName?: string;
   uploadedFileSize?: number;
   children?: React.ReactNode;
+  selectedDocumentIds?: string[];
+  onDocumentSelect?: (documentId: string) => void;
+  onDocumentDelete?: (documentId: string) => void;
+  documentRefreshTrigger?: number;
+  activeTab?: SidebarTab;
+  onTabChange?: (tab: SidebarTab) => void;
+  isDashboardGenerating?: boolean;
+  isDashboardReady?: boolean;
+  onCreateDashboard?: () => void;
 }
 
 export default function Sidebar({
@@ -33,82 +42,150 @@ export default function Sidebar({
   onClearChat,
   onRemoveFile,
   onOpenFinanceAgent,
-  isFinanceAgentProcessing = false,
-  financeAgentProcessedCount = 0,
   messageCount,
   uploadedFileName,
   uploadedFileSize,
   children,
+  selectedDocumentIds = [],
+  onDocumentSelect,
+  onDocumentDelete,
+  documentRefreshTrigger,
+  activeTab = "chat",
+  onTabChange,
+  isDashboardGenerating = false,
+  isDashboardReady = false,
+  onCreateDashboard,
 }: SidebarProps) {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
   return (
-    <aside className="flex h-[calc(100vh-4rem)] w-80 flex-col gap-6 border-r border-border/50 bg-gradient-to-b from-card/50 to-card/30 p-6 shadow-lg backdrop-blur-sm overflow-y-auto scrollbar-thin">
-      {/* Document Section */}
+    <aside className="flex h-[calc(100vh-4rem)] w-80 flex-col gap-6 border-r border-border bg-[#F3F4F6] shadow-md">
+      {/* Tab Navigation */}
+      <div className="flex border-b border-border bg-white">
+        <button
+          onClick={() => onTabChange?.("chat")}
+          className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 text-sm font-medium transition-colors ${
+            activeTab === "chat"
+              ? "bg-white text-[#111827] border-b-2 border-[#2563EB]"
+              : "text-[#6B7280] hover:text-[#111827] hover:bg-[#F8FAFC]"
+          }`}
+        >
+          <MessageSquare className="h-4 w-4" />
+          Chat
+        </button>
+        <button
+          onClick={() => onTabChange?.("dashboard")}
+          disabled={!isPDFLoaded || selectedDocumentIds.length === 0}
+          className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 text-sm font-medium transition-colors ${
+            activeTab === "dashboard"
+              ? "bg-white text-[#111827] border-b-2 border-[#2563EB]"
+              : "text-[#6B7280] hover:text-[#111827] hover:bg-[#F8FAFC] disabled:opacity-50 disabled:cursor-not-allowed"
+          }`}
+        >
+          <LayoutDashboard className="h-4 w-4" />
+          Dashboard
+          {isDashboardGenerating && (
+            <span className="absolute top-1 right-1 h-2 w-2 bg-[#2563EB] rounded-full animate-pulse" title="Generating..." />
+          )}
+          {isDashboardReady && !isDashboardGenerating && (
+            <span className="absolute top-1 right-1 h-2 w-2 bg-[#16A34A] rounded-full" title="Ready" />
+          )}
+        </button>
+      </div>
+
+      <div className="flex-1 overflow-y-auto scrollbar-thin p-6 bg-[#F3F4F6]">
+      {/* Document Upload Section */}
       <div className="space-y-3">
         <div className="flex items-center gap-2 px-2">
-          <FileText className="h-4 w-4 text-muted-foreground" />
-          <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-            Document
+          <FileText className="h-4 w-4 text-[#6B7280]" />
+          <h2 className="text-xs font-semibold uppercase tracking-wider text-[#6B7280]">
+            Upload Document
           </h2>
         </div>
         <UploadCard
           onUploadSuccess={onUploadSuccess}
           onUploadError={onUploadError}
         />
-        
-        {/* File Metadata */}
-        {uploadedFileName && (
-          <Card className="border-border/50 bg-card/50 shadow-sm">
+      </div>
+
+      {/* Documents List Section */}
+      <div className="space-y-3">
+        <div className="flex items-center gap-2 px-2">
+          <FileText className="h-4 w-4 text-[#6B7280]" />
+          <h2 className="text-xs font-semibold uppercase tracking-wider text-[#6B7280]">
+            Documents ({selectedDocumentIds.length > 0 ? `${selectedDocumentIds.length} selected` : "All"})
+          </h2>
+        </div>
+        <DocumentList
+          selectedDocumentIds={selectedDocumentIds}
+          onDocumentSelect={onDocumentSelect}
+          onDocumentDelete={onDocumentDelete}
+          refreshTrigger={documentRefreshTrigger}
+        />
+      </div>
+
+      {/* Create Dashboard Section */}
+      {isPDFLoaded && selectedDocumentIds.length > 0 && !isProcessing && (
+        <div className="space-y-3">
+          <div className="flex items-center gap-2 px-2">
+            <LayoutDashboard className="h-4 w-4 text-[#6B7280]" />
+            <h2 className="text-xs font-semibold uppercase tracking-wider text-[#6B7280]">
+              Dashboard
+            </h2>
+          </div>
+          <Card className="border-[#E5E7EB] bg-white shadow-sm">
             <CardContent className="p-4">
-              <div className="space-y-2">
-                <div className="flex items-start justify-between gap-2">
-                  <div className="flex-1 min-w-0">
-                    <p className="truncate text-sm font-medium text-foreground">
-                      {uploadedFileName}
+              <div className="space-y-3">
+                {!isDashboardReady && !isDashboardGenerating && (
+                  <Button
+                    onClick={onCreateDashboard}
+                    className="w-full bg-[#2563EB] hover:bg-[#1D4ED8] text-white font-semibold shadow-md"
+                    size="lg"
+                  >
+                    <LayoutDashboard className="h-4 w-4 mr-2" />
+                    Create Dashboard
+                  </Button>
+                )}
+                {isDashboardGenerating && (
+                  <div className="flex items-center gap-2 text-sm text-[#6B7280]">
+                    <Loader2 className="h-4 w-4 animate-spin text-[#2563EB]" />
+                    <span>Generating dashboard...</span>
+                  </div>
+                )}
+                {isDashboardReady && !isDashboardGenerating && (
+                  <div className="flex items-center gap-2 text-sm text-[#16A34A]">
+                    <CheckCircle2 className="h-4 w-4" />
+                    <span>Dashboard ready</span>
+                  </div>
+                )}
+                {isPDFLoaded && (
+                  <div className="pt-2 border-t border-[#E5E7EB]">
+                    <p className="text-xs text-[#6B7280]">
+                      {selectedDocumentIds.length} document{selectedDocumentIds.length !== 1 ? "s" : ""} selected
                     </p>
-                    {uploadedFileSize && (
-                      <p className="text-xs text-muted-foreground">
-                        {formatFileSize(uploadedFileSize)}
-                      </p>
-                    )}
                   </div>
-                  <div className="flex items-center gap-2 shrink-0">
-                    <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-green-500/20">
-                      <div className="h-2 w-2 rounded-full bg-green-500" />
-                    </div>
-                    {onRemoveFile && (
-                      <button
-                        onClick={onRemoveFile}
-                        className="flex h-6 w-6 items-center justify-center rounded-md hover:bg-destructive/20 text-muted-foreground hover:text-destructive transition-colors"
-                        title="Remove file"
-                      >
-                        <X className="h-3.5 w-3.5" />
-                      </button>
-                    )}
-                  </div>
-                </div>
+                )}
               </div>
             </CardContent>
           </Card>
-        )}
-      </div>
+        </div>
+      )}
 
       {/* Status Section */}
       <div className="space-y-3">
         <div className="flex items-center gap-2 px-2">
-          <Activity className="h-4 w-4 text-muted-foreground" />
-          <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+          <Activity className="h-4 w-4 text-[#6B7280]" />
+          <h2 className="text-xs font-semibold uppercase tracking-wider text-[#6B7280]">
             Status
           </h2>
         </div>
-        <Card className="border-border/50 bg-card/50 shadow-sm">
+        <Card className="border-[#E5E7EB] bg-white shadow-sm">
           <CardContent className="p-4">
             <div className="space-y-3">
               <StatusBadge isPDFLoaded={isPDFLoaded} isProcessing={isProcessing} />
               {isPDFLoaded && (
-                <div className="pt-2 border-t border-border/50">
-                  <p className="text-xs text-muted-foreground">
+                <div className="pt-2 border-t border-[#E5E7EB]">
+                  <p className="text-xs text-[#6B7280]">
                     {messageCount} message{messageCount !== 1 ? "s" : ""} in conversation
                   </p>
                 </div>
@@ -118,31 +195,34 @@ export default function Sidebar({
         </Card>
       </div>
 
-      {/* Finance Agent Section */}
-      {isPDFLoaded && (
-        <FinanceAgent
-          onOpenFinanceAgent={onOpenFinanceAgent || (() => {})}
-          disabled={!isPDFLoaded}
-          isProcessing={isFinanceAgentProcessing}
-          processedCount={financeAgentProcessedCount}
-        />
+      {/* Content based on active tab */}
+      {activeTab === "chat" ? (
+        <>
+          {/* Conversation History Section */}
+          {children}
+        </>
+      ) : (
+        <>
+          {/* Dashboard will be rendered in main content area */}
+          <div className="text-center py-8 text-muted-foreground">
+            <LayoutDashboard className="h-12 w-12 mx-auto mb-4 opacity-50" />
+            <p className="text-sm">Dashboard content will appear in the main panel</p>
+          </div>
+        </>
       )}
-
-      {/* Conversation History Section */}
-      {children}
 
       {/* Actions Section */}
       <div className="space-y-3">
         <div className="flex items-center gap-2 px-2">
-          <Settings className="h-4 w-4 text-muted-foreground" />
-          <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+          <Settings className="h-4 w-4 text-[#6B7280]" />
+          <h2 className="text-xs font-semibold uppercase tracking-wider text-[#6B7280]">
             Actions
           </h2>
         </div>
         <div className="space-y-2">
           <Button
             variant="outline"
-            className="w-full justify-start border-border/50 bg-card/50 hover:bg-card hover:border-border"
+            className="w-full justify-start border-[#E5E7EB] bg-white hover:bg-[#F8FAFC] hover:border-[#6B7280] text-[#111827]"
             onClick={onClearChat}
             disabled={messageCount === 0}
           >
@@ -152,7 +232,7 @@ export default function Sidebar({
 
           <Button
             variant="ghost"
-            className="w-full justify-between hover:bg-card/50"
+            className="w-full justify-between hover:bg-[#F8FAFC] text-[#111827]"
             onClick={() => setIsSettingsOpen(!isSettingsOpen)}
           >
             <div className="flex items-center">
@@ -167,12 +247,12 @@ export default function Sidebar({
           </Button>
 
           {isSettingsOpen && (
-            <Card className="mt-2 border-border/50 bg-card/30 shadow-sm">
+            <Card className="mt-2 border-[#E5E7EB] bg-white shadow-sm">
               <CardContent className="p-4">
                 <div className="space-y-4 text-sm">
                   <div>
-                    <p className="font-medium text-foreground">API Endpoint</p>
-                    <p className="mt-1 text-xs text-muted-foreground font-mono">
+                    <p className="font-medium text-[#111827]">API Endpoint</p>
+                    <p className="mt-1 text-xs text-[#6B7280] font-mono">
                       {process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"}
                     </p>
                   </div>
@@ -181,6 +261,7 @@ export default function Sidebar({
             </Card>
           )}
         </div>
+      </div>
       </div>
     </aside>
   );

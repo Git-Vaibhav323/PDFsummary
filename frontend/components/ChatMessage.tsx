@@ -40,7 +40,7 @@ export default function ChatMessage({
 
   return (
     <div
-      className={`flex gap-4 animate-fade-in ${
+      className={`flex gap-4 animate-fade-in w-full min-w-0 ${
         isUser ? "flex-row-reverse" : "flex-row"
       }`}
     >
@@ -48,8 +48,8 @@ export default function ChatMessage({
       <div
         className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full shadow-sm transition-all ${
           isUser
-            ? "bg-primary text-primary-foreground ring-2 ring-primary/20"
-            : "bg-gradient-to-br from-muted to-muted/80 text-foreground ring-2 ring-border/50"
+            ? "bg-[#2563EB] text-white ring-2 ring-[#2563EB]/20"
+            : "bg-white text-[#111827] ring-2 ring-[#E5E7EB]"
         }`}
       >
         {isUser ? (
@@ -61,31 +61,34 @@ export default function ChatMessage({
 
       {/* Message Content */}
       <div
-        className={`flex flex-1 flex-col gap-2.5 ${
+        className={`flex flex-1 flex-col gap-2.5 w-full min-w-0 ${
           isUser ? "items-end" : "items-start"
         }`}
       >
         <div
           className={`max-w-[80%] rounded-xl px-4 py-3 shadow-sm transition-all ${
             isUser
-              ? "bg-primary text-primary-foreground shadow-primary/20"
-              : "bg-card border border-border/50 text-foreground shadow-md"
+              ? "bg-[#2563EB] text-white shadow-md border border-[#1D4ED8]"
+              : "bg-white border border-[#E5E7EB] text-[#111827] shadow-md"
           }`}
         >
-          <p className="whitespace-pre-wrap break-words text-sm leading-relaxed [text-wrap:pretty]">
+          <p className={`whitespace-pre-wrap break-words text-sm leading-relaxed [text-wrap:pretty] ${
+            isUser ? "text-white" : "text-[#111827]"
+          }`}>
             {content}
           </p>
         </div>
 
         {/* Visualization */}
         {visualization && !isUser && !(visualization as any)?.error && (
-          <div className="max-w-[80%] rounded-xl border border-border/50 bg-card/80 p-4 shadow-md backdrop-blur-sm">
+          <div className="w-full max-w-full min-w-0 -mx-2 md:mx-0 rounded-xl border border-[#E5E7EB] bg-white p-3 md:p-6 shadow-md">
             {typeof visualization === 'string' ? (
               // Legacy format: base64 image string
               <img
                 src={`data:image/png;base64,${visualization}`}
                 alt="Chart visualization"
-                className="max-w-full rounded-lg"
+                className="w-full max-w-full h-auto rounded-lg"
+                style={{ maxHeight: '600px', objectFit: 'contain' }}
               />
             ) : visualization.labels && visualization.values && (visualization.chart_type || visualization.type) ? (
               // Chart format: bar, line, pie, or stacked_bar chart using Recharts
@@ -100,7 +103,7 @@ export default function ChatMessage({
               />
             ) : (visualization.headers && Array.isArray(visualization.headers) && visualization.rows && Array.isArray(visualization.rows) && visualization.headers.length > 0 && visualization.rows.length > 0) ? (
               // Table format: structured data (PRIORITY - check this first)
-              <div className="w-full my-6">
+              <div className="w-full min-w-0 my-6">
                 {visualization.title && (
                   <h3 className="text-xl font-bold mb-4 text-foreground">{visualization.title}</h3>
                 )}
@@ -241,7 +244,7 @@ export default function ChatMessage({
               </div>
             ) : visualization.markdown ? (
               // Table format: parse markdown table and render as HTML table
-              <div className="w-full my-4">
+              <div className="w-full min-w-0 my-4">
                 {(() => {
                   // Parse markdown table into headers and rows
                   const lines = visualization.markdown.split('\n').filter((line: string) => line.trim());
@@ -304,7 +307,7 @@ export default function ChatMessage({
                   const tableTitle = titleMatch ? titleMatch[1] : visualization.title;
                   
                   return (
-                    <div className="w-full my-6">
+                    <div className="w-full min-w-0 my-6">
                       {tableTitle && (
                         <h3 className="text-xl font-bold mb-4 text-foreground">{tableTitle}</h3>
                       )}
@@ -394,7 +397,8 @@ export default function ChatMessage({
                 <img
                   src={`data:image/png;base64,${visualization.image_base64}`}
                   alt={visualization.title || "Chart visualization"}
-                  className="max-w-full rounded-lg"
+                  className="w-full max-w-full h-auto rounded-lg"
+                  style={{ maxHeight: '600px', objectFit: 'contain' }}
                 />
               </div>
             ) : null}

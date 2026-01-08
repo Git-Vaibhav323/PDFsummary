@@ -55,7 +55,13 @@ class VisualizationDetector:
     
     def should_visualize(self, question: str, context: str) -> bool:
         """
-        Determine if visualization is needed.
+        Determine if visualization is needed - AUTOMATIC CHART GENERATION.
+        
+        Automatically detects when charts are appropriate based on:
+        - Trends, comparisons, growth/decline patterns
+        - Year-wise data, percentages, quantitative analysis
+        - Financial metrics, numerical comparisons
+        - Even if user doesn't explicitly ask for charts
         
         Args:
             question: User question
@@ -76,7 +82,7 @@ class VisualizationDetector:
             'chart', 'charts', 'graph', 'graphs', 'visualize', 'visualization', 'visualizations',
             'bar chart', 'line chart', 'pie chart', 'bar graph', 'line graph', 'pie graph',
             'show chart', 'display chart', 'give me chart', 'give me charts',
-            'generate chart', 'create chart', 'plot', 'plotting',
+            'generate chart', 'create chart', 'plot', 'plotting', 'show this in a graph',
             'table', 'tables', 'tabular', 'show table', 'display table', 'tabular format',
             'financial charts', 'financial data', 'financial graphs'
         ]
@@ -86,15 +92,71 @@ class VisualizationDetector:
             logger.info(f"✅ Explicit visualization request detected: '{question}'")
             return True
         
-        # Check if context has numerical data
+        # AUTOMATIC DETECTION: Chart-appropriate patterns (even without explicit request)
+        chart_indicators = [
+            # Trends and comparisons
+            'trend', 'trends', 'trending', 'over time', 'across', 'between',
+            'compare', 'comparison', 'compared', 'versus', 'vs', 'vs.',
+            'growth', 'decline', 'increase', 'decrease', 'change', 'changes',
+            'improve', 'improvement', 'deteriorate', 'deterioration',
+            
+            # Time-based patterns
+            'year', 'years', 'yearly', 'yoy', 'year-over-year', 'annual',
+            'quarter', 'quarters', 'quarterly', 'q1', 'q2', 'q3', 'q4',
+            'month', 'months', 'monthly', 'period', 'periods',
+            'fiscal year', 'fy', '2020', '2021', '2022', '2023', '2024', '2025',
+            
+            # Quantitative analysis
+            'percentage', 'percent', '%', 'ratio', 'ratios', 'rate', 'rates',
+            'metric', 'metrics', 'performance', 'analysis', 'analyses',
+            'statistics', 'statistical', 'data', 'numbers', 'figures',
+            
+            # Financial terms (always trigger visualization)
+            'revenue', 'profit', 'sales', 'cost', 'costs', 'expense', 'expenses',
+            'income', 'earnings', 'margin', 'margins', 'ebitda', 'ebit',
+            'asset', 'assets', 'liability', 'liabilities', 'equity',
+            'balance sheet', 'income statement', 'cash flow', 'p&l', 'profit & loss',
+            'financial', 'financially', 'financials', 'financial performance',
+            'financial metrics', 'financial data', 'financial analysis',
+            
+            # Comparison patterns
+            'higher', 'lower', 'better', 'worse', 'best', 'worst',
+            'top', 'bottom', 'maximum', 'minimum', 'peak', 'lowest',
+            'ranking', 'ranked', 'order', 'ordered'
+        ]
+        
+        # Check if question contains chart-appropriate patterns
+        has_chart_pattern = any(indicator in question_lower for indicator in chart_indicators)
+        
+        # Check if context has numerical data (more lenient threshold)
         import re
         numbers = re.findall(r'\b\d+(?:,\d+)*(?:\.\d+)?\b', context)
-        if len(numbers) < 2:
-            logger.debug("Insufficient numerical data in context")
-            return False
+        percentages = re.findall(r'\d+(?:\.\d+)?%', context)
+        has_numerical_data = len(numbers) >= 2 or len(percentages) >= 1
         
-        logger.debug(f"Found {len(numbers)} numbers, visualization likely needed")
-        return True
+        # Check for year patterns in context
+        year_patterns = re.findall(r'\b(20\d{2}|19\d{2})\b', context)
+        has_years = len(year_patterns) >= 2
+        
+        # Check for comparison patterns in context
+        comparison_keywords = ['compared', 'versus', 'vs', 'vs.', 'against', 'than', 'from', 'to']
+        has_comparisons = any(keyword in context.lower() for keyword in comparison_keywords)
+        
+        # AUTOMATIC VISUALIZATION: Generate charts when appropriate patterns detected
+        should_visualize = (
+            has_chart_pattern or  # Question suggests chart
+            (has_numerical_data and has_years) or  # Year-wise numerical data
+            (has_numerical_data and has_comparisons) or  # Numerical comparisons
+            (has_numerical_data and len(percentages) > 0) or  # Percentage data
+            (has_numerical_data and len(numbers) >= 3)  # Multiple data points
+        )
+        
+        if should_visualize:
+            logger.info(f"✅ Automatic chart generation triggered: pattern={has_chart_pattern}, numbers={len(numbers)}, years={len(year_patterns)}, comparisons={has_comparisons}")
+            return True
+        
+        logger.debug(f"No automatic visualization triggers: numbers={len(numbers)}, years={len(year_patterns)}")
+        return False
     
     def detect_with_llm(self, question: str, context: str) -> bool:
         """

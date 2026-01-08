@@ -37,10 +37,12 @@ class OpenAIEmbeddingsWrapper:
         try:
             logger.info(f"🚀 Initializing OpenAI embeddings: {self.model_name}")
             
-            # Initialize OpenAI embeddings
+            # Initialize OpenAI embeddings with timeout configuration
             self._embeddings = OpenAIEmbeddings(
                 model=self.model_name,
-                api_key=settings.openai_api_key
+                api_key=settings.openai_api_key,
+                timeout=60.0,  # 60 second timeout
+                max_retries=3  # Retry up to 3 times
             )
             
             logger.info(f"✅ OpenAI embeddings initialized")
