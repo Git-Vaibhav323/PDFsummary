@@ -39,6 +39,9 @@ class Settings(BaseSettings):
     # Mistral API Configuration (for OCR and preprocessing)
     mistral_api_key: Optional[str] = Field(default=None, description="Mistral API key (optional, required for OCR)")
     
+    # Tavily API Configuration (for web search)
+    tavily_api_key: Optional[str] = Field(default=None, description="Tavily API key (optional, required for web search)")
+    
     @field_validator('openai_api_key')
     @classmethod
     def validate_api_key(cls, v: str) -> str:

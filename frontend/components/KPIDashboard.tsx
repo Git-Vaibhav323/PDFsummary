@@ -88,13 +88,15 @@ export function KPICard({
 }
 
 // Profit & Loss KPIs
-export function ProfitLossKPIs({ data }: { data: any }) {
+export function ProfitLossKPIs({ data, hideFY2025 = false }: { data: any; hideFY2025?: boolean }) {
   const getLatestValue = (field: string): number | null => {
     const fieldData = data?.[field];
     if (!fieldData || typeof fieldData !== "object") return null;
     const years = Object.keys(fieldData).sort();
-    if (years.length === 0) return null;
-    const value = fieldData[years[years.length - 1]];
+    // Filter out FY2025 if hideFY2025 is true
+    const filteredYears = hideFY2025 ? years.filter(year => !year.includes('2025')) : years;
+    if (filteredYears.length === 0) return null;
+    const value = fieldData[filteredYears[filteredYears.length - 1]];
     // Allow all numeric values including 0 and negatives
     return (value !== undefined && value !== null && typeof value === "number") ? value : null;
   };
@@ -103,9 +105,11 @@ export function ProfitLossKPIs({ data }: { data: any }) {
     const fieldData = data?.[field];
     if (!fieldData || typeof fieldData !== "object") return null;
     const years = Object.keys(fieldData).sort();
-    if (years.length < 2) return null;
-    const latest = fieldData[years[years.length - 1]];
-    const previous = fieldData[years[years.length - 2]];
+    // Filter out FY2025 if hideFY2025 is true
+    const filteredYears = hideFY2025 ? years.filter(year => !year.includes('2025')) : years;
+    if (filteredYears.length < 2) return null;
+    const latest = fieldData[filteredYears[filteredYears.length - 1]];
+    const previous = fieldData[filteredYears[filteredYears.length - 2]];
     if (latest === undefined || latest === null || previous === undefined || previous === null || previous === 0) return null;
     return ((latest - previous) / previous) * 100;
   };
@@ -183,7 +187,6 @@ export function ProfitLossKPIs({ data }: { data: any }) {
   if (kpiCards.length === 0) {
     return (
       <div className="p-4 text-center text-[#6B7280] mb-6">
-        <p className="text-sm">Profit & Loss metrics not disclosed in report</p>
       </div>
     );
   }
@@ -195,75 +198,148 @@ export function ProfitLossKPIs({ data }: { data: any }) {
   );
 }
 
-// Balance Sheet KPIs
-export function BalanceSheetKPIs({ data }: { data: any }) {
-  const getLatestValue = (field: string): number | null => {
+// Balance Sheet KPIs - YEAR-WISE with Growth %
+export function BalanceSheetKPIs({ data, hideFY2025 = false }: { data: any; hideFY2025?: boolean }) {
+  const getYearWiseValues = (field: string): { [year: string]: number } | null => {
+    const fieldData = data?.[field];
+    if (!fieldData || typeof fieldData !== "object") return null;
+    const result: { [year: string]: number } = {};
+    Object.keys(fieldData).sort().forEach(year => {
+      // Filter out FY2025 if hideFY2025 is true
+      if (hideFY2025 && year.includes('2025')) return;
+      const value = fieldData[year];
+      if (value !== undefined && value !== null && typeof value === "number") {
+        result[year] = value;
+      }
+    });
+    return Object.keys(result).length > 0 ? result : null;
+  };
+
+  const getGrowth = (field: string): number | null => {
     const fieldData = data?.[field];
     if (!fieldData || typeof fieldData !== "object") return null;
     const years = Object.keys(fieldData).sort();
-    if (years.length === 0) return null;
-    const value = fieldData[years[years.length - 1]];
-    // Allow all numeric values including 0 and negatives
-    return (value !== undefined && value !== null && typeof value === "number") ? value : null;
+    // Filter out FY2025 if hideFY2025 is true
+    const filteredYears = hideFY2025 ? years.filter(year => !year.includes('2025')) : years;
+    if (filteredYears.length < 2) return null;
+    const latest = fieldData[filteredYears[filteredYears.length - 1]];
+    const previous = fieldData[filteredYears[filteredYears.length - 2]];
+    if (latest === undefined || latest === null || previous === undefined || previous === null || previous === 0) return null;
+    return ((latest - previous) / previous) * 100;
   };
 
-  const totalAssets = getLatestValue("total_assets");
-  const currentLiabilities = getLatestValue("current_liabilities");
-  const nonCurrentLiabilities = getLatestValue("non_current_liabilities");
-  const totalLiabilities = (currentLiabilities ?? 0) + (nonCurrentLiabilities ?? 0);
-  const netWorth = totalAssets !== null ? (totalAssets - totalLiabilities) : null;
-  const debtEquityRatio = totalLiabilities > 0 && netWorth !== null && netWorth > 0 
-    ? (totalLiabilities / netWorth) 
-    : null;
+  const totalAssetsByYear = getYearWiseValues("total_assets");
+  const currentLiabilitiesByYear = getYearWiseValues("current_liabilities");
+  const nonCurrentLiabilitiesByYear = getYearWiseValues("non_current_liabilities");
+  const shareholderEquityByYear = getYearWiseValues("shareholder_equity");
+  
+  // Calculate total liabilities by year
+  const totalLiabilitiesByYear: { [year: string]: number } = {};
+  if (currentLiabilitiesByYear || nonCurrentLiabilitiesByYear) {
+    const allYears = new Set([
+      ...(currentLiabilitiesByYear ? Object.keys(currentLiabilitiesByYear) : []),
+      ...(nonCurrentLiabilitiesByYear ? Object.keys(nonCurrentLiabilitiesByYear) : [])
+    ]);
+    allYears.forEach(year => {
+      totalLiabilitiesByYear[year] = 
+        (currentLiabilitiesByYear?.[year] || 0) + (nonCurrentLiabilitiesByYear?.[year] || 0);
+    });
+  }
+  
+  // Calculate growth percentages
+  const assetGrowth = getGrowth("total_assets");
+  const liabilityGrowth = getGrowth("total_liabilities");
+  const equityGrowth = getGrowth("shareholder_equity");
 
   // Only render cards with valid data - NO N/A VALUES
   const kpiCards = [];
   
-  if (totalAssets !== null && totalAssets !== undefined) {
+  // Total Assets (Year-wise) - show multiple years
+  if (totalAssetsByYear && Object.keys(totalAssetsByYear).length > 0) {
+    const years = Object.keys(totalAssetsByYear).sort();
+    const latestYear = years[years.length - 1];
     kpiCards.push(
       <KPICard
         key="assets"
-        title="Total Assets"
-        value={totalAssets}
+        title={`Total Assets (${years.length} years)`}
+        value={totalAssetsByYear[latestYear]}
+        change={assetGrowth ?? undefined}
         icon={<Building2 className="h-5 w-5 text-[#6B7280]" />}
         format="currency"
+        suffix={`FY${latestYear}`}
       />
     );
   }
   
-  if (totalLiabilities > 0) {
+  // Total Liabilities (Year-wise) - show multiple years
+  if (Object.keys(totalLiabilitiesByYear).length > 0) {
+    const years = Object.keys(totalLiabilitiesByYear).sort();
+    const latestYear = years[years.length - 1];
     kpiCards.push(
       <KPICard
         key="liabilities"
-        title="Total Liabilities"
-        value={totalLiabilities}
+        title={`Total Liabilities (${years.length} years)`}
+        value={totalLiabilitiesByYear[latestYear]}
+        change={liabilityGrowth ?? undefined}
         icon={<Activity className="h-5 w-5 text-[#6B7280]" />}
         format="currency"
+        suffix={`FY${latestYear}`}
       />
     );
   }
   
-  if (netWorth !== null && netWorth !== undefined) {
+  // Shareholders' Equity (Year-wise) - show multiple years
+  if (shareholderEquityByYear && Object.keys(shareholderEquityByYear).length > 0) {
+    const years = Object.keys(shareholderEquityByYear).sort();
+    const latestYear = years[years.length - 1];
     kpiCards.push(
       <KPICard
-        key="netWorth"
-        title="Net Worth"
-        value={netWorth}
+        key="equity"
+        title={`Shareholders' Equity (${years.length} years)`}
+        value={shareholderEquityByYear[latestYear]}
+        change={equityGrowth ?? undefined}
         icon={<DollarSign className="h-5 w-5 text-[#6B7280]" />}
         format="currency"
+        suffix={`FY${latestYear}`}
       />
     );
   }
   
-  if (debtEquityRatio !== null && debtEquityRatio !== undefined && debtEquityRatio > 0) {
+  // Asset Growth %
+  if (assetGrowth !== null && assetGrowth !== undefined) {
     kpiCards.push(
       <KPICard
-        key="debtEquity"
-        title="Debt-Equity Ratio"
-        value={debtEquityRatio}
-        icon={<BarChart3 className="h-5 w-5 text-[#6B7280]" />}
-        format="number"
-        suffix=":1"
+        key="assetGrowth"
+        title="Asset Growth %"
+        value={assetGrowth}
+        icon={<TrendingUp className="h-5 w-5 text-[#6B7280]" />}
+        format="percentage"
+      />
+    );
+  }
+  
+  // Liability Growth %
+  if (liabilityGrowth !== null && liabilityGrowth !== undefined) {
+    kpiCards.push(
+      <KPICard
+        key="liabilityGrowth"
+        title="Liability Growth %"
+        value={liabilityGrowth}
+        icon={<TrendingUp className="h-5 w-5 text-[#6B7280]" />}
+        format="percentage"
+      />
+    );
+  }
+  
+  // Equity Growth %
+  if (equityGrowth !== null && equityGrowth !== undefined) {
+    kpiCards.push(
+      <KPICard
+        key="equityGrowth"
+        title="Equity Growth %"
+        value={equityGrowth}
+        icon={<TrendingUp className="h-5 w-5 text-[#6B7280]" />}
+        format="percentage"
       />
     );
   }
@@ -283,71 +359,91 @@ export function BalanceSheetKPIs({ data }: { data: any }) {
   );
 }
 
-// Cash Flow KPIs
-export function CashFlowKPIs({ data }: { data: any }) {
-  const getLatestValue = (field: string): number | null => {
+// Cash Flow KPIs - YEAR-WISE with separate activities
+export function CashFlowKPIs({ data, hideFY2025 = false }: { data: any; hideFY2025?: boolean }) {
+  const getYearWiseValues = (field: string): { [year: string]: number } | null => {
     const fieldData = data?.[field];
     if (!fieldData || typeof fieldData !== "object") return null;
-    const years = Object.keys(fieldData).sort();
-    if (years.length === 0) return null;
-    const value = fieldData[years[years.length - 1]];
-    return value !== undefined && value !== null ? value : null; // Allow negative values for cash flow
+    const result: { [year: string]: number } = {};
+    Object.keys(fieldData).sort().forEach(year => {
+      // Filter out FY2025 if hideFY2025 is true
+      if (hideFY2025 && year.includes('2025')) return;
+      const value = fieldData[year];
+      if (value !== undefined && value !== null && typeof value === "number") {
+        result[year] = value;
+      }
+    });
+    return Object.keys(result).length > 0 ? result : null;
   };
 
-  const operatingCF = getLatestValue("operating_cash_flow");
-  const investingCF = getLatestValue("investing_cash_flow");
-  const financingCF = getLatestValue("financing_cash_flow");
-  const freeCashFlow = operatingCF !== null && investingCF !== null 
-    ? operatingCF + investingCF 
-    : null; // Simplified FCF calculation
+  const operatingCFByYear = getYearWiseValues("operating_cash_flow");
+  const investingCFByYear = getYearWiseValues("investing_cash_flow");
+  const financingCFByYear = getYearWiseValues("financing_cash_flow");
+  const cashEquivalentsByYear = getYearWiseValues("cash_and_equivalents");
 
   // Only render cards with valid data - NO N/A VALUES
   const kpiCards = [];
   
-  if (operatingCF !== null && operatingCF !== undefined) {
+  // Cash flow from Operating Activity (Year-wise)
+  if (operatingCFByYear && Object.keys(operatingCFByYear).length > 0) {
+    const years = Object.keys(operatingCFByYear).sort();
+    const latestYear = years[years.length - 1];
     kpiCards.push(
       <KPICard
         key="operating"
-        title="Operating CF"
-        value={operatingCF}
+        title={`Cash flow from Operating Activity (${years.length} years)`}
+        value={operatingCFByYear[latestYear]}
         icon={<Activity className="h-5 w-5 text-[#6B7280]" />}
         format="currency"
+        suffix={`FY${latestYear}`}
       />
     );
   }
   
-  if (investingCF !== null && investingCF !== undefined) {
+  // Cash Flow from Investing Activities (Year-wise)
+  if (investingCFByYear && Object.keys(investingCFByYear).length > 0) {
+    const years = Object.keys(investingCFByYear).sort();
+    const latestYear = years[years.length - 1];
     kpiCards.push(
       <KPICard
         key="investing"
-        title="Investing CF"
-        value={investingCF}
+        title={`Investing CF (${years.length} years)`}
+        value={investingCFByYear[latestYear]}
         icon={<TrendingDown className="h-5 w-5 text-[#6B7280]" />}
         format="currency"
+        suffix={`FY${latestYear}`}
       />
     );
   }
   
-  if (financingCF !== null && financingCF !== undefined) {
+  // Cash Flow from Financing Activities (Year-wise)
+  if (financingCFByYear && Object.keys(financingCFByYear).length > 0) {
+    const years = Object.keys(financingCFByYear).sort();
+    const latestYear = years[years.length - 1];
     kpiCards.push(
       <KPICard
         key="financing"
-        title="Financing CF"
-        value={financingCF}
+        title={`Financing CF (${years.length} years)`}
+        value={financingCFByYear[latestYear]}
         icon={<TrendingUp className="h-5 w-5 text-[#6B7280]" />}
         format="currency"
+        suffix={`FY${latestYear}`}
       />
     );
   }
   
-  if (freeCashFlow !== null && freeCashFlow !== undefined) {
+  // Cash & Cash Equivalents (Year-wise)
+  if (cashEquivalentsByYear && Object.keys(cashEquivalentsByYear).length > 0) {
+    const years = Object.keys(cashEquivalentsByYear).sort();
+    const latestYear = years[years.length - 1];
     kpiCards.push(
       <KPICard
-        key="fcf"
-        title="Free Cash Flow"
-        value={freeCashFlow}
+        key="cashEquivalents"
+        title={`Cash & Equivalents (${years.length} years)`}
+        value={cashEquivalentsByYear[latestYear]}
         icon={<DollarSign className="h-5 w-5 text-[#6B7280]" />}
         format="currency"
+        suffix={`FY${latestYear}`}
       />
     );
   }
@@ -367,69 +463,94 @@ export function CashFlowKPIs({ data }: { data: any }) {
   );
 }
 
-// Accounting Ratios KPIs
-export function AccountingRatiosKPIs({ data }: { data: any }) {
-  const getLatestValue = (field: string): number | null => {
+// Accounting Ratios KPIs - YEAR-WISE with individual ratios
+export function AccountingRatiosKPIs({ data, hideFY2025 = false }: { data: any; hideFY2025?: boolean }) {
+  const getYearWiseValues = (field: string): { [year: string]: number } | null => {
+    const fieldData = data?.[field];
+    if (!fieldData || typeof fieldData !== "object") return null;
+    const result: { [year: string]: number } = {};
+    Object.keys(fieldData).sort().forEach(year => {
+      // Filter out FY2025 if hideFY2025 is true
+      if (hideFY2025 && year.includes('2025')) return;
+      const value = fieldData[year];
+      if (value !== undefined && value !== null && typeof value === "number") {
+        result[year] = value;
+      }
+    });
+    return Object.keys(result).length > 0 ? result : null;
+  };
+
+  const getYearOverYearChange = (field: string): number | null => {
     const fieldData = data?.[field];
     if (!fieldData || typeof fieldData !== "object") return null;
     const years = Object.keys(fieldData).sort();
-    if (years.length === 0) return null;
-    const value = fieldData[years[years.length - 1]];
-    // Allow all numeric values including 0 and negatives
-    return (value !== undefined && value !== null && typeof value === "number") ? value : null;
+    // Filter out FY2025 if hideFY2025 is true
+    const filteredYears = hideFY2025 ? years.filter(year => !year.includes('2025')) : years;
+    if (filteredYears.length < 2) return null;
+    const latest = fieldData[filteredYears[filteredYears.length - 1]];
+    const previous = fieldData[filteredYears[filteredYears.length - 2]];
+    if (latest === undefined || latest === null || previous === undefined || previous === null || previous === 0) return null;
+    return ((latest - previous) / previous) * 100;
   };
 
-  const roe = getLatestValue("roe");
-  const roce = getLatestValue("roce");
-  const operatingMargin = getLatestValue("operating_margin");
-  const currentRatio = getLatestValue("current_ratio");
-  const netDebtEBITDA = getLatestValue("net_debt_ebitda");
+  const roeByYear = getYearWiseValues("roe");
+  const roceByYear = getYearWiseValues("roce");
+  const operatingMarginByYear = getYearWiseValues("operating_margin");
+  const currentRatioByYear = getYearWiseValues("current_ratio");
+  const netDebtEBITDAByYear = getYearWiseValues("net_debt_ebitda");
+
+  // Calculate year-over-year changes
+  const roeChange = getYearOverYearChange("roe");
+  const roceChange = getYearOverYearChange("roce");
+  const operatingMarginChange = getYearOverYearChange("operating_margin");
+  const currentRatioChange = getYearOverYearChange("current_ratio");
+  const netDebtEBITDAChange = getYearOverYearChange("net_debt_ebitda");
 
   // Only render cards with valid data - NO N/A VALUES
   const kpiCards = [];
   
-  if (roe !== null && roe !== undefined) {
+  // ROE (Return on Equity) - MANDATORY
+  if (roeByYear && Object.keys(roeByYear).length > 0) {
+    const years = Object.keys(roeByYear).sort();
+    const latestYear = years[years.length - 1];
     kpiCards.push(
       <KPICard
         key="roe"
-        title="ROE"
-        value={roe}
+        title={`ROE – FY${latestYear}`}
+        value={roeByYear[latestYear]}
+        change={roeChange ?? undefined}
         icon={<Target className="h-5 w-5 text-[#6B7280]" />}
         format="percentage"
       />
     );
   }
   
-  if (roce !== null && roce !== undefined) {
+  // ROCE (Return on Capital Employed) - MANDATORY
+  if (roceByYear && Object.keys(roceByYear).length > 0) {
+    const years = Object.keys(roceByYear).sort();
+    const latestYear = years[years.length - 1];
     kpiCards.push(
       <KPICard
         key="roce"
-        title="ROCE"
-        value={roce}
+        title={`ROCE – FY${latestYear}`}
+        value={roceByYear[latestYear]}
+        change={roceChange ?? undefined}
         icon={<Target className="h-5 w-5 text-[#6B7280]" />}
         format="percentage"
       />
     );
   }
   
-  if (operatingMargin !== null && operatingMargin !== undefined) {
-    kpiCards.push(
-      <KPICard
-        key="opMargin"
-        title="Operating Margin"
-        value={operatingMargin}
-        icon={<BarChart3 className="h-5 w-5 text-[#6B7280]" />}
-        format="percentage"
-      />
-    );
-  }
-  
-  if (currentRatio !== null && currentRatio !== undefined && currentRatio > 0) {
+  // Current Ratio - MANDATORY
+  if (currentRatioByYear && Object.keys(currentRatioByYear).length > 0) {
+    const years = Object.keys(currentRatioByYear).sort();
+    const latestYear = years[years.length - 1];
     kpiCards.push(
       <KPICard
         key="currentRatio"
-        title="Current Ratio"
-        value={currentRatio}
+        title={`Current Ratio – FY${latestYear}`}
+        value={currentRatioByYear[latestYear]}
+        change={currentRatioChange ?? undefined}
         icon={<Activity className="h-5 w-5 text-[#6B7280]" />}
         format="number"
         suffix=":1"
@@ -437,12 +558,71 @@ export function AccountingRatiosKPIs({ data }: { data: any }) {
     );
   }
   
-  if (netDebtEBITDA !== null && netDebtEBITDA !== undefined) {
+  // Debt-to-Equity Ratio - MANDATORY
+  if (data?.debt_equity_ratio || data?.debt_to_equity_ratio) {
+    const debtToEquityData = getYearWiseValues("debt_equity_ratio") || getYearWiseValues("debt_to_equity_ratio");
+    if (debtToEquityData && Object.keys(debtToEquityData).length > 0) {
+      const years = Object.keys(debtToEquityData).sort();
+      const latestYear = years[years.length - 1];
+      const debtToEquityChange = getYearOverYearChange("debt_equity_ratio") || getYearOverYearChange("debt_to_equity_ratio");
+      kpiCards.push(
+        <KPICard
+          key="debtToEquity"
+          title={`Debt-to-Equity Ratio – FY${latestYear}`}
+          value={debtToEquityData[latestYear]}
+          change={debtToEquityChange ?? undefined}
+          icon={<BarChart3 className="h-5 w-5 text-[#6B7280]" />}
+          format="number"
+          suffix=":1"
+        />
+      );
+    }
+  }
+  
+  // Operating Margin - IF AVAILABLE
+  if (operatingMarginByYear && Object.keys(operatingMarginByYear).length > 0) {
+    const years = Object.keys(operatingMarginByYear).sort();
+    const latestYear = years[years.length - 1];
     kpiCards.push(
       <KPICard
-        key="netDebt"
-        title="Net Debt/EBITDA"
-        value={netDebtEBITDA}
+        key="operatingMargin"
+        title={`Operating Margin – FY${latestYear}`}
+        value={operatingMarginByYear[latestYear]}
+        change={operatingMarginChange ?? undefined}
+        icon={<BarChart3 className="h-5 w-5 text-[#6B7280]" />}
+        format="percentage"
+      />
+    );
+  }
+  
+  // Net Margin - IF AVAILABLE (check if we have net_margin data)
+  const netMarginByYear = getYearWiseValues("net_margin");
+  if (netMarginByYear && Object.keys(netMarginByYear).length > 0) {
+    const years = Object.keys(netMarginByYear).sort();
+    const latestYear = years[years.length - 1];
+    const netMarginChange = getYearOverYearChange("net_margin");
+    kpiCards.push(
+      <KPICard
+        key="netMargin"
+        title={`Net Margin – FY${latestYear}`}
+        value={netMarginByYear[latestYear]}
+        change={netMarginChange ?? undefined}
+        icon={<BarChart3 className="h-5 w-5 text-[#6B7280]" />}
+        format="percentage"
+      />
+    );
+  }
+  
+  // Net Debt/EBITDA - IF AVAILABLE
+  if (netDebtEBITDAByYear && Object.keys(netDebtEBITDAByYear).length > 0) {
+    const years = Object.keys(netDebtEBITDAByYear).sort();
+    const latestYear = years[years.length - 1];
+    kpiCards.push(
+      <KPICard
+        key="netDebtEBITDA"
+        title={`Net Debt/EBITDA – FY${latestYear}`}
+        value={netDebtEBITDAByYear[latestYear]}
+        change={netDebtEBITDAChange ?? undefined}
         icon={<BarChart3 className="h-5 w-5 text-[#6B7280]" />}
         format="number"
       />

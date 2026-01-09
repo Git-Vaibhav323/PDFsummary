@@ -44,23 +44,30 @@ interface DashboardData {
       summary?: string;
     };
     management_highlights?: {
-      insights: Array<{ title: string; summary: string; category: string }>;
+      insights: Array<{ title: string; summary: string; category: string; emphasis?: string }>;
       summary: string;
+      source?: string;
     };
     latest_news?: {
       news: Array<{ headline: string; summary: string; source: string; date: string }>;
       source: string;
+      source_badge?: string;
+      summary?: string;
     };
     competitors?: {
       competitors: Array<{ name: string; insight: string; source: string }>;
       source: string;
+      source_badge?: string;
+      summary?: string;
     };
     investor_pov?: {
       trends: any;
       summary: string;
       bull_case: string[];
       risk_factors: string[];
+      charts: any[];
     };
+    error?: string;
   };
   error?: string;
 }
@@ -316,7 +323,7 @@ export default function FinancialDashboard({
             )}
           >
             {/* KPI Cards */}
-            <ProfitLossKPIs data={dashboardData.sections.profit_loss?.data} />
+            <ProfitLossKPIs data={dashboardData.sections.profit_loss?.data} hideFY2025={true} />
             
             {/* Charts */}
             {dashboardData.sections.profit_loss?.charts && dashboardData.sections.profit_loss.charts.length > 0 ? (
@@ -361,7 +368,7 @@ export default function FinancialDashboard({
             )}
           >
             {/* KPI Cards */}
-            <BalanceSheetKPIs data={dashboardData.sections.balance_sheet?.data} />
+            <BalanceSheetKPIs data={dashboardData.sections.balance_sheet?.data} hideFY2025={true} />
             
             {/* Charts */}
             {dashboardData.sections.balance_sheet?.charts && dashboardData.sections.balance_sheet.charts.length > 0 ? (
@@ -444,7 +451,7 @@ export default function FinancialDashboard({
             )}
           >
             {/* KPI Cards */}
-            <AccountingRatiosKPIs data={dashboardData.sections.accounting_ratios?.data} />
+            <AccountingRatiosKPIs data={dashboardData.sections.accounting_ratios?.data} hideFY2025={true} />
             
             {/* Charts */}
             {dashboardData.sections.accounting_ratios?.charts && dashboardData.sections.accounting_ratios.charts.length > 0 ? (
@@ -490,14 +497,46 @@ export default function FinancialDashboard({
             }
           >
             {dashboardData.sections.management_highlights?.insights && dashboardData.sections.management_highlights.insights.length > 0 ? (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {dashboardData.sections.management_highlights.insights.map((insight, idx) => (
-                  <Card key={idx} className="p-4 bg-white border border-[#E5E7EB] shadow-[0_1px_3px_rgba(0,0,0,0.08)] rounded-xl">
-                    <h4 className="font-semibold mb-2 text-[#111827]">{insight.title}</h4>
-                    <p className="text-sm text-[#6B7280]">{insight.summary}</p>
-                    <span className="text-xs text-[#2563EB] mt-2 inline-block">{insight.category}</span>
-                  </Card>
-                ))}
+              <div className="space-y-4">
+                {/* High Emphasis Insights */}
+                {dashboardData.sections.management_highlights.insights
+                  .filter(insight => insight.emphasis === 'high')
+                  .map((insight, idx) => (
+                    <Card key={`high-${idx}`} className="p-4 bg-gradient-to-r from-[#FEF3C7] to-[#F59E0B] border-2 border-[#F59E0B] shadow-lg rounded-xl">
+                      <div className="flex items-start gap-3">
+                        <div className="p-2 bg-white rounded-lg">
+                          <Target className="h-6 w-6 text-[#F59E0B]" />
+                        </div>
+                        <div className="flex-1">
+                          <h4 className="font-bold mb-2 text-[#111827] text-lg">{insight.title}</h4>
+                          <p className="text-sm text-[#374151] leading-relaxed">{insight.summary}</p>
+                          <span className="text-xs text-[#F59E0B] mt-2 inline-block px-2 py-1 bg-[#F59E0B]/20 rounded-full font-semibold">
+                            HIGH PRIORITY
+                          </span>
+                        </div>
+                      </div>
+                    </Card>
+                  ))}
+                
+                {/* Medium Emphasis Insights */}
+                {dashboardData.sections.management_highlights.insights
+                  .filter(insight => insight.emphasis === 'medium')
+                  .map((insight, idx) => (
+                    <Card key={`medium-${idx}`} className="p-4 bg-gradient-to-r from-[#DBEAFE] to-[#BFDBFE] border border-[#3B82F6] shadow-md rounded-xl">
+                      <div className="flex items-start gap-3">
+                        <div className="p-2 bg-white rounded-lg">
+                          <BarChart3 className="h-5 w-5 text-[#3B82F6]" />
+                        </div>
+                        <div className="flex-1">
+                          <h4 className="font-semibold mb-2 text-[#111827]">{insight.title}</h4>
+                          <p className="text-sm text-[#374151] leading-relaxed">{insight.summary}</p>
+                          <span className="text-xs text-[#3B82F6] mt-2 inline-block px-2 py-1 bg-[#3B82F6]/20 rounded-full font-medium">
+                            MEDIUM PRIORITY
+                          </span>
+                        </div>
+                      </div>
+                    </Card>
+                  ))}
               </div>
             ) : (
               <div className="p-4 text-center text-[#6B7280]">
@@ -530,6 +569,14 @@ export default function FinancialDashboard({
                 : "Latest news and market updates extracted from documents and web sources")
             }
           >
+            {/* Highlighted Section */}
+            <div className="mb-4 p-3 bg-gradient-to-r from-[#FEF3C7] to-[#F59E0B] border border-[#F59E0B] rounded-lg">
+              <div className="flex items-center gap-2">
+                <Newspaper className="h-5 w-5 text-[#F59E0B]" />
+                <span className="text-sm font-semibold text-[#111827]">📰 Latest News - Market Updates</span>
+              </div>
+            </div>
+            
             {/* Source Badge - Prominently show data source */}
             {dashboardData.sections.latest_news?.source_badge && (
               <div className="mb-4 inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-[#DBEAFE] text-[#1D4ED8] border border-[#2563EB]">
@@ -540,7 +587,7 @@ export default function FinancialDashboard({
             {dashboardData.sections.latest_news?.news && dashboardData.sections.latest_news.news.length > 0 ? (
               <div className="space-y-4">
                 {dashboardData.sections.latest_news.news.map((item, idx) => (
-                  <Card key={idx} className="p-4 bg-white border border-[#E5E7EB] shadow-[0_1px_3px_rgba(0,0,0,0.08)] rounded-xl">
+                  <Card key={idx} className="p-4 bg-white border border-[#E5E7EB] shadow-[0_1px_3px_rgba(0,0,0,0.08)] rounded-xl hover:shadow-lg transition-shadow">
                     <h4 className="font-semibold mb-2 text-[#111827]">{item.headline}</h4>
                     <p className="text-sm text-[#6B7280] mb-2">{item.summary}</p>
                     <div className="flex items-center justify-between text-xs">
@@ -821,7 +868,7 @@ const isValidNumber = (val: any): boolean => {
          isFinite(val);
 };
 
-function ChartCard({ chart }: { chart: any }) {
+function ChartCard({ chart }: { chart: any }): JSX.Element | null {
   // CRITICAL: Validate chart has valid data before rendering - NO EMPTY CHARTS
   if (!chart) {
     return null;
@@ -871,15 +918,10 @@ function ChartCard({ chart }: { chart: any }) {
     return null; // Hide chart if no valid values
   }
   
-  // CRITICAL: Hide chart if all valid values are zero (no meaningful data)
-  const nonZeroValues = validValues.filter(v => v !== 0);
-  if (nonZeroValues.length === 0) {
-    return null; // Hide chart if all values are zero
-  }
-  
   // Ensure labels and values arrays match length
   const minLength = Math.min(chartProps.labels.length, validValues.length);
   chartProps.labels = chartProps.labels.slice(0, minLength);
+  chartProps.values = validValues.slice(0, minLength);
   chartProps.values = validValues.slice(0, minLength);
 
   return (

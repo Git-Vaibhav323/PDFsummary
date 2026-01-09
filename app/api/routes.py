@@ -22,7 +22,7 @@ from pydantic import BaseModel
 import re
 
 from app.config.settings import settings
-from app.rag.rag_system import get_rag_system, initialize_rag_system
+from app.rag.rag_system import EnterpriseRAGSystem, get_rag_system, initialize_rag_system
 from app.rag.pdf_loader import PDFLoader
 from app.rag.memory import clear_memory
 from app.database.conversations import ConversationStorage
@@ -1455,16 +1455,17 @@ async def generate_financial_dashboard(request: FinancialDashboardRequest):
         if not request or not request.document_ids:
             raise HTTPException(status_code=400, detail="document_ids required")
         
-        # Check cache first
+        # CRITICAL: Always regenerate dashboard for document-scoped data
+        # Clear any existing cache for these document IDs to ensure fresh extraction
         dashboard_storage = get_dashboard_storage()
-        cached_dashboard = dashboard_storage.get_dashboard(request.document_ids)
         
-        if cached_dashboard:
-            logger.info(f"📖 Using cached dashboard for {len(request.document_ids)} document(s)")
-            return JSONResponse(content=cached_dashboard)
+        # Delete any existing dashboard for these document IDs to force regeneration
+        # This ensures each document gets its own dashboard and no stale data is shown
+        dashboard_storage.delete_dashboard(request.document_ids)
+        logger.info(f"🗑️ Cleared any existing dashboard cache for {len(request.document_ids)} document(s) - forcing fresh extraction")
         
-        # Generate new dashboard with real extraction
-        logger.info(f"📊 Generating new dashboard with real data extraction for {len(request.document_ids)} document(s)")
+        # Generate new dashboard with real extraction (NO cache lookup)
+        logger.info(f"📊 Generating NEW dashboard with real data extraction for {len(request.document_ids)} document(s)")
         rag_system = get_rag_system()
         dashboard_generator = FinancialDashboardGenerator(rag_system=rag_system)
         
@@ -1641,7 +1642,7 @@ def _get_section_fallback(section_name: str, company: str, years: List[str]) -> 
             "charts": [
                 {
                     "type": "bar",
-                    "title": "Cash Flow by Activity",
+                    "title": "Cash Flow Activity by Operating Margins",
                     "labels": years,
                     "values": [15000 + i * 1500 for i in range(5)],
                     "xAxis": "Year",

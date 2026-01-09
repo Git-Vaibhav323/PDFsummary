@@ -27,11 +27,16 @@ def _get_tavily_api_key() -> Optional[str]:
     if api_key:
         return api_key
     
-    # Try loading from .env file using pydantic-settings
+    # Try loading from settings
     try:
-        from app.config.settings import Settings
-        # Check if settings has tavily_key (if we add it to Settings)
-        # For now, try loading .env manually
+        from app.config.settings import settings
+        if settings.tavily_api_key:
+            return settings.tavily_api_key
+    except Exception as e:
+        logger.debug(f"Could not load TAVILY_API_KEY from settings: {e}")
+    
+    # Try loading from .env file manually (fallback)
+    try:
         from pathlib import Path
         env_file = Path(__file__).parent.parent.parent / ".env"
         if env_file.exists():
